@@ -4,15 +4,15 @@ import base64
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
 import shutil
 import socket
 import subprocess
 import tempfile
+from contextlib import suppress
+from pathlib import Path
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
-
 
 CDP_DEFAULT_ENDPOINTS = ("http://127.0.0.1:9222", "http://localhost:9222")
 CDP_ENV_VAR = "WEIBO_COOKIE_CDP_URL"
@@ -63,7 +63,7 @@ def get_weibo_cookie_header() -> str:
 
     try:
         import browser_cookie3 as bc3
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise CookieFetchError(
             "缺少 browser-cookie3 依赖，请先运行 pip install -r requirements.txt 安装依赖。"
         ) from exc
@@ -109,7 +109,7 @@ def get_weibo_cookie_header() -> str:
                             read_errors,
                             no_cookie_errors,
                         )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 _append_attempt_error(
                     f"{browser_name} {source.label} 临时副本: {type(exc).__name__}: {exc}",
                     read_errors,
@@ -199,7 +199,7 @@ def _cdp_endpoints() -> list[str]:
 def _try_cdp_endpoint(endpoint: str) -> tuple[str, str | None]:
     try:
         version = _fetch_json(f"{endpoint}/json/version", timeout=1.5)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return "", f"未连接到调试端口（{type(exc).__name__}: {exc}）"
 
     target_errors: list[str] = []
@@ -229,7 +229,7 @@ def _iter_cdp_page_websockets(endpoint: str) -> list[str]:
     urls: list[str] = []
     try:
         targets = _fetch_json(f"{endpoint}/json/list", timeout=1.5)
-    except Exception:  # noqa: BLE001
+    except Exception:
         targets = []
     if isinstance(targets, list):
         for target in targets:
@@ -248,7 +248,7 @@ def _iter_cdp_page_websockets(endpoint: str) -> list[str]:
         ws_url = str(target.get("webSocketDebuggerUrl") or "")
         if ws_url:
             urls.append(ws_url)
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass
     return urls
 
@@ -256,16 +256,14 @@ def _iter_cdp_page_websockets(endpoint: str) -> list[str]:
 def _try_cdp_cookies_from_page_ws(ws_url: str) -> tuple[str, str | None]:
     try:
         with _CdpWebSocket(ws_url) as ws:
-            try:
+            with suppress(Exception):
                 ws.call("Network.enable")
-            except Exception:  # noqa: BLE001
-                pass
             result = ws.call("Network.getCookies", {"urls": list(WEIBO_COOKIE_URLS)})
         cookie = _cdp_cookies_to_header(result.get("cookies", []))
         if cookie:
             return cookie, None
         return "", "Network.getCookies: 未找到微博登录态 Cookie"
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return "", f"Network.getCookies: {type(exc).__name__}: {exc}"
 
 
@@ -278,7 +276,7 @@ def _try_cdp_cookies_from_browser_ws(ws_url: str) -> tuple[str, str | None]:
         if cookie:
             return cookie, None
         errors.append("Storage.getCookies: 未找到微博登录态 Cookie")
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         errors.append(f"Storage.getCookies: {type(exc).__name__}: {exc}")
     return "", "；".join(errors)
 
@@ -306,7 +304,7 @@ def _cookie_domain_applies_to_weibo(domain: str) -> bool:
     return clean == "weibo.com" or clean.endswith(".weibo.com")
 
 
-def _fetch_json(url_or_request, timeout: float) -> dict | list:  # noqa: ANN001
+def _fetch_json(url_or_request, timeout: float) -> dict | list:
     with urlopen(url_or_request, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
@@ -317,16 +315,14 @@ class _CdpWebSocket:
         self.sock: socket.socket | None = None
         self.next_id = 1
 
-    def __enter__(self) -> "_CdpWebSocket":
+    def __enter__(self) -> _CdpWebSocket:
         self.sock = _websocket_connect(self.ws_url)
         return self
 
-    def __exit__(self, exc_type, exc_value, traceback) -> None:  # noqa: ANN001
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
         if self.sock:
-            try:
+            with suppress(Exception):
                 _websocket_send_frame(self.sock, b"", opcode=0x8)
-            except Exception:  # noqa: BLE001
-                pass
             self.sock.close()
             self.sock = None
 
@@ -457,14 +453,14 @@ def _recv_exact(sock: socket.socket, size: int) -> bytes:
     return data
 
 
-def _try_loader(loader, **kwargs) -> tuple[str, str | None]:  # noqa: ANN001
+def _try_loader(loader, **kwargs) -> tuple[str, str | None]:
     try:
         jar = loader(**kwargs)
         cookie = _jar_to_cookie_header(jar)
         if cookie:
             return cookie, None
         return "", "未找到匹配的 weibo.com Cookie"
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return "", f"{type(exc).__name__}: {exc}"
 
 
@@ -567,12 +563,12 @@ def _profile_names_from_local_state(root: Path) -> list[str]:
         return []
     try:
         data = json.loads(local_state.read_text(encoding="utf-8"))
-    except Exception:  # noqa: BLE001
+    except Exception:
         return []
     info_cache = data.get("profile", {}).get("info_cache", {})
     if not isinstance(info_cache, dict):
         return []
-    return [str(name) for name in info_cache.keys() if name]
+    return [str(name) for name in info_cache if name]
 
 
 def _copy_cookie_db_to_temp(cookie_file: Path) -> tuple[Path, Path]:

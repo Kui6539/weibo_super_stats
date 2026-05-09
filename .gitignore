@@ -5,6 +5,8 @@ env/
 __pycache__/
 *.py[cod]
 *.pyd
+*.pdb
+*.obj
 
 output/
 .edge_cdp_profile/

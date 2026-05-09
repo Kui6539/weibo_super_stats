@@ -40,7 +40,6 @@ const ui = {
 };
 
 let pollTimer = null;
-let currentJobId = null;
 let lastRenderedCandidateJob = null;
 let renderedPreviewKey = "";
 let autoPreviewResultKey = "";
@@ -338,7 +337,6 @@ async function startJob() {
       method: "POST",
       body: JSON.stringify(readForm()),
     });
-    currentJobId = data.job?.id || null;
     lastRenderedCandidateJob = null;
     renderedPreviewKey = "";
     autoPreviewResultKey = "";

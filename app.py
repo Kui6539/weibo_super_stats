@@ -38,7 +38,6 @@ from crawler import (
     write_summary_txt,
 )
 
-
 APP_HOST = "127.0.0.1"
 APP_PORT = 8765
 WEB_ROOT = Path(__file__).with_name("web")
@@ -72,11 +71,17 @@ def datetime_local_value(value: datetime) -> str:
 def parse_datetime_local(value: Any) -> datetime:
     text = str(value or "").strip()
     for fmt in ("%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"):
-        try:
-            return datetime.strptime(text, fmt)
-        except ValueError:
-            continue
+        parsed = _parse_datetime_with_format(text, fmt)
+        if parsed is not None:
+            return parsed
     raise ValueError("日期时间格式无效")
+
+
+def _parse_datetime_with_format(text: str, fmt: str) -> datetime | None:
+    try:
+        return datetime.strptime(text, fmt)
+    except ValueError:
+        return None
 
 
 def normalize_output_dir(value: Any) -> Path:
@@ -134,7 +139,7 @@ def load_saved_config() -> dict[str, str]:
         return {}
     try:
         data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-    except Exception as err:  # noqa: BLE001
+    except Exception as err:
         console_log(f"读取配置失败：{type(err).__name__}: {err}")
         return {}
     if not isinstance(data, dict):
@@ -411,7 +416,7 @@ class CrawlJob:
         except CrawlError as err:
             self.log(f"任务失败：{err}")
             self._set_failed(str(err))
-        except Exception as err:  # noqa: BLE001
+        except Exception as err:
             message = f"{type(err).__name__}: {err}"
             self.log(f"任务失败：{message}")
             self._set_failed(message)
@@ -450,7 +455,7 @@ def app_defaults() -> dict[str, Any]:
 class AppRequestHandler(BaseHTTPRequestHandler):
     server_version = "WeiboStatsHTML/2.0"
 
-    def do_GET(self) -> None:  # noqa: N802
+    def do_GET(self) -> None:
         path = urlparse(self.path).path
         if path == "/api/defaults":
             self._send_json({"defaults": app_defaults()})
@@ -476,7 +481,7 @@ class AppRequestHandler(BaseHTTPRequestHandler):
             return
         self._send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
 
-    def do_POST(self) -> None:  # noqa: N802
+    def do_POST(self) -> None:
         path = urlparse(self.path).path
         try:
             if path == "/api/start":
@@ -533,10 +538,10 @@ class AppRequestHandler(BaseHTTPRequestHandler):
             self._send_json({"error": str(err)}, HTTPStatus.CONFLICT)
         except ValueError as err:
             self._send_json({"error": str(err)}, HTTPStatus.BAD_REQUEST)
-        except Exception as err:  # noqa: BLE001
+        except Exception as err:
             self._send_json({"error": f"{type(err).__name__}: {err}"}, HTTPStatus.INTERNAL_SERVER_ERROR)
 
-    def log_message(self, format: str, *args: Any) -> None:
+    def log_message(self, _format: str, *_args: Any) -> None:
         return
 
     def _send_report_preview(self) -> None:
@@ -670,12 +675,18 @@ def create_server(host: str, port: int) -> tuple[ThreadingHTTPServer, str]:
     ports = [port, *range(port + 1, port + 20)]
     last_error: OSError | None = None
     for candidate in ports:
-        try:
-            server = ThreadingHTTPServer((host, candidate), AppRequestHandler)
+        server, error = _try_create_server(host, candidate)
+        if server:
             return server, f"http://{host}:{candidate}/"
-        except OSError as err:
-            last_error = err
+        last_error = error
     raise RuntimeError(f"无法启动本地服务：{last_error}")
+
+
+def _try_create_server(host: str, port: int) -> tuple[ThreadingHTTPServer | None, OSError | None]:
+    try:
+        return ThreadingHTTPServer((host, port), AppRequestHandler), None
+    except OSError as err:
+        return None, err
 
 
 def parse_args() -> argparse.Namespace:
