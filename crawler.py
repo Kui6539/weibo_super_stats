@@ -25,6 +25,7 @@ from docx.shared import Pt, RGBColor
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 
+
 SUPER_TOPIC_ID_PATTERN = re.compile(r"/p/([0-9a-fA-F]+)")
 FM_VIEW_MARKER = "FM.view("
 COMMENTS_API_URL = "https://weibo.com/ajax/statuses/buildComments"
@@ -963,6 +964,10 @@ def _build_export_row(post: dict) -> dict:
 
 
 def build_comment_leaderboards(posts: Iterable[dict], top_n: int = 3) -> dict:
+    return _build_comment_leaderboards_py(posts, top_n=top_n)
+
+
+def _build_comment_leaderboards_py(posts: Iterable[dict], top_n: int = 3) -> dict:
     rows = list(posts)
     stats: dict[str, dict] = {}
 
@@ -1158,6 +1163,28 @@ def export_weekly_report_docx(
         parts.append(out_path)
 
     return parts
+
+
+def export_weekly_report_sum_docx(
+    posts: Iterable[dict],
+    docx_path: Path,
+    title: str = "warma超话周报",
+    leaderboards: dict | None = None,
+    preselected: bool = False,
+) -> Path:
+    all_posts = list(posts)
+    rows = all_posts[:15] if preselected else _select_weekly_posts(all_posts, limit=15)
+    board = leaderboards or build_comment_leaderboards(all_posts, top_n=3)
+    docx_path.parent.mkdir(parents=True, exist_ok=True)
+    _write_weekly_report_docx_part(
+        rows,
+        docx_path,
+        title,
+        board,
+        include_leaderboards=True,
+        part_number=1,
+    )
+    return docx_path
 
 
 def _numbered_docx_path(docx_path: Path, seq: int) -> Path:
@@ -1525,7 +1552,13 @@ def download_post_images(
         post["downloaded_comment_image_count"] = len(all_comment_local_paths)
         post["comment_image_local_paths"] = " | ".join(all_comment_local_paths)
         post["image_local_paths_all"] = " | ".join(post_local_paths + all_comment_local_paths)
+
+
 def build_summary(posts: Iterable[dict]) -> dict:
+    return _build_summary_py(posts)
+
+
+def _build_summary_py(posts: Iterable[dict]) -> dict:
     rows = list(posts)
     if not rows:
         return {
@@ -1566,6 +1599,10 @@ def build_summary(posts: Iterable[dict]) -> dict:
 
 
 def analyze_active_period(posts: Iterable[dict]) -> dict:
+    return _analyze_active_period_py(posts)
+
+
+def _analyze_active_period_py(posts: Iterable[dict]) -> dict:
     rows = list(posts)
     hour_counts = [0] * 24
     valid = 0
@@ -1720,7 +1757,14 @@ def write_summary_txt(
     txt_path.write_text("\n".join(lines), encoding="utf-8")
 
 
-def _calc_date_distribution_fit(all_dist: dict[str, int], selected_dist: dict[str, int]) -> dict:
+def _calc_date_distribution_fit(
+    all_dist: dict[str, int],
+    selected_dist: dict[str, int],
+) -> dict:
+    return _calc_date_distribution_fit_py(all_dist, selected_dist)
+
+
+def _calc_date_distribution_fit_py(all_dist: dict[str, int], selected_dist: dict[str, int]) -> dict:
     dates = sorted(set(all_dist.keys()) | set(selected_dist.keys()))
     if not dates:
         return {

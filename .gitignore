@@ -7,6 +7,8 @@ __pycache__/
 *.pyd
 
 output/
+.edge_cdp_profile/
+weibo_stats_config.json
 *.log
 
 .env

@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>微博超话周报工具</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>微博超话周报工具</h1>
+        <p id="saveState" class="muted">配置自动保存</p>
+      </div>
+      <div class="topbar-actions">
+        <button id="previewBtn" type="button" class="secondary hidden" disabled>预览 Markdown</button>
+        <div class="status-pill" id="statusPill">未开始</div>
+      </div>
+    </header>
+
+    <main id="layout" class="layout">
+      <div class="work-column">
+        <section class="panel form-panel" aria-label="抓取设置">
+          <div class="section-title">
+            <h2>抓取设置</h2>
+            <span class="muted">超话、Cookie 与导出参数</span>
+          </div>
+
+          <label class="field wide">
+            <span>超话链接或 ID</span>
+            <input id="superTopic" type="text" autocomplete="off" />
+          </label>
+
+          <label class="field wide">
+            <span>微博 Cookie</span>
+            <textarea id="cookie" rows="6" spellcheck="false"></textarea>
+          </label>
+
+          <div class="button-row">
+            <button id="edgeDebugBtn" type="button" class="secondary">打开调试 Edge</button>
+            <button id="autoCookieBtn" type="button" class="secondary">自动获取 Cookie</button>
+            <button id="clipboardBtn" type="button" class="secondary">读取剪贴板</button>
+            <button id="extractCookieBtn" type="button" class="secondary">识别粘贴内容</button>
+          </div>
+
+          <div class="grid two">
+            <label class="field">
+              <span>开始时间</span>
+              <input id="windowStart" type="datetime-local" />
+            </label>
+            <label class="field">
+              <span>结束时间</span>
+              <input id="windowEnd" type="datetime-local" />
+            </label>
+          </div>
+
+          <div class="grid three">
+            <label class="field">
+              <span>最大页数</span>
+              <input id="maxPages" type="number" min="1" step="1" />
+            </label>
+            <label class="field">
+              <span>评论系数</span>
+              <input id="topicCommentFactor" type="number" min="0.5" step="0.1" />
+            </label>
+            <label class="field">
+              <span>请求间隔</span>
+              <input id="pauseSeconds" type="number" min="0" step="0.1" />
+            </label>
+          </div>
+
+          <label class="field wide">
+            <span>导出目录</span>
+            <input id="outputDir" type="text" autocomplete="off" />
+          </label>
+
+          <div class="button-row end">
+            <button id="startBtn" type="button" class="primary">开始抓取并导出</button>
+          </div>
+        </section>
+
+        <section id="monitorPanel" class="panel monitor-panel" aria-label="任务状态">
+          <div class="section-title">
+            <h2>任务状态</h2>
+            <span id="jobMeta" class="muted">等待启动</span>
+          </div>
+
+          <div class="logbox" id="logBox" aria-live="polite"></div>
+        </section>
+
+        <section id="resultPanel" class="panel result-panel hidden">
+          <div class="section-title compact">
+            <h2>导出结果</h2>
+          </div>
+          <div id="resultList" class="result-list"></div>
+        </section>
+      </div>
+
+      <section id="candidatePanel" class="side-panel candidate-panel" aria-label="人工筛选" aria-hidden="true">
+        <div class="side-toolbar">
+          <div class="section-title compact">
+            <h2>人工筛选</h2>
+            <span id="pickCount" class="muted"></span>
+          </div>
+          <div class="candidate-actions">
+            <button id="selectBtn" type="button" class="primary">确认入选</button>
+            <button id="cancelSelectBtn" type="button" class="secondary">取消</button>
+          </div>
+        </div>
+        <div id="candidateList" class="candidate-list"></div>
+      </section>
+
+      <section id="previewPanel" class="side-panel preview-panel" aria-label="Markdown 周报预览" aria-hidden="true">
+        <div class="side-toolbar">
+          <div>
+            <h2>Markdown 周报预览</h2>
+            <p id="previewPath" class="muted"></p>
+          </div>
+        </div>
+        <article id="previewContent" class="markdown-body"></article>
+      </section>
+    </main>
+
+    <script src="/app.js" defer></script>
+  </body>
+</html>
