@@ -20,6 +20,7 @@ const controls = {
   select: $("selectBtn"),
   cancelSelect: $("cancelSelectBtn"),
   preview: $("previewBtn"),
+  openResultDir: $("openResultDirBtn"),
 };
 
 const ui = {
@@ -551,6 +552,8 @@ function renderResult(job) {
     ui.monitorPanel.classList.remove("collapsed");
     controls.preview.classList.add("hidden");
     controls.preview.disabled = true;
+    controls.openResultDir.classList.add("hidden");
+    controls.openResultDir.disabled = true;
     hidePreview();
     autoPreviewResultKey = "";
     return;
@@ -559,6 +562,8 @@ function renderResult(job) {
   ui.monitorPanel.classList.add("collapsed");
   controls.preview.classList.remove("hidden");
   controls.preview.disabled = false;
+  controls.openResultDir.classList.remove("hidden");
+  controls.openResultDir.disabled = false;
   const rows = [
     ["总帖数", result.total_posts],
     ["导出目录", result.run_dir],
@@ -787,6 +792,19 @@ async function cancelSelection() {
   }
 }
 
+async function openResultDir() {
+  setBusy(controls.openResultDir, true, "正在打开");
+  try {
+    const data = await api("/api/open-result-dir", { method: "POST", body: "{}" });
+    showToast(`已打开：${data.path || "导出目录"}`);
+  } catch (err) {
+    appendClientLog(err.message);
+    alert(err.message);
+  } finally {
+    setBusy(controls.openResultDir, false);
+  }
+}
+
 async function loadMarkdownPreview(options = {}) {
   const isAuto = Boolean(options.auto);
   if (!isAuto) {
@@ -931,6 +949,7 @@ controls.clipboard.addEventListener("click", readClipboard);
 controls.extractCookie.addEventListener("click", extractCookie);
 controls.select.addEventListener("click", submitSelection);
 controls.cancelSelect.addEventListener("click", cancelSelection);
+controls.openResultDir.addEventListener("click", openResultDir);
 controls.preview.addEventListener("click", () => {
   if (ui.previewPanel.getAttribute("aria-hidden") === "true") {
     loadMarkdownPreview();

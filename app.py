@@ -539,6 +539,13 @@ class AppRequestHandler(BaseHTTPRequestHandler):
                     raise ValueError("粘贴内容中未识别到 Cookie。")
                 self._send_json({"cookie": cookie})
                 return
+            if path == "/api/open-result-dir":
+                result_dir = current_result_dir_path()
+                if not result_dir:
+                    raise ValueError("当前没有可打开的导出目录。")
+                open_local_path(result_dir)
+                self._send_json({"path": str(result_dir)})
+                return
             self._send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
         except CookieFetchError as err:
             console_log(f"Cookie 自动读取失败：{err}")
@@ -645,6 +652,30 @@ def current_report_md_path() -> Path | None:
     if path.exists() and path.is_file():
         return path.resolve()
     return None
+
+
+def current_result_dir_path() -> Path | None:
+    job = get_current_job()
+    if not job:
+        return None
+    snapshot = job.snapshot()
+    result = snapshot.get("result")
+    if not isinstance(result, dict):
+        return None
+    run_dir = result.get("run_dir")
+    if not run_dir:
+        return None
+    path = Path(str(run_dir))
+    if path.exists() and path.is_dir():
+        return path.resolve()
+    return None
+
+
+def open_local_path(path: Path) -> None:
+    if os.name == "nt":
+        os.startfile(str(path))
+        return
+    raise RuntimeError("当前系统不支持从页面打开本地目录。")
 
 
 def resolve_report_asset_path(report_path: Path, rel_text: str) -> Path | None:

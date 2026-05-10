@@ -231,6 +231,14 @@ h2 {
   padding: 18px;
 }
 
+.result-title {
+  align-items: center;
+}
+
+.result-title button {
+  min-height: 34px;
+}
+
 .monitor-panel {
   padding: 18px;
   overflow: hidden;
