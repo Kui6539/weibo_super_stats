@@ -10,51 +10,51 @@ if not defined PYEXE (
 )
 
 if not defined PYEXE (
-  echo [ERROR] 未找到 Python。请先安装 Python 3.10 或更高版本，并勾选 Add python.exe to PATH。
+  echo [ERROR] Python was not found. Please install Python 3.10+ and enable "Add python.exe to PATH".
   goto :error
 )
 
 if not exist "app.py" (
-  echo [ERROR] 未找到 app.py。请把本脚本放在项目根目录后再运行。
+  echo [ERROR] app.py was not found. Please put this script in the project root.
   goto :error
 )
 
 if not exist "requirements.txt" (
-  echo [ERROR] 未找到 requirements.txt。请确认项目文件完整。
+  echo [ERROR] requirements.txt was not found. Please check the project files.
   goto :error
 )
 
 if not exist ".venv\Scripts\python.exe" (
-  echo [1/4] 正在创建虚拟环境...
+  echo [1/4] Creating virtual environment...
   %PYEXE% -m venv .venv
   if errorlevel 1 goto :error
 )
 
-echo [2/4] 正在升级 pip...
+echo [2/4] Upgrading pip...
 call ".venv\Scripts\python.exe" -m pip install --upgrade pip
 if errorlevel 1 goto :error
 
-echo [3/4] 正在安装/更新依赖...
+echo [3/4] Installing/updating dependencies...
 call ".venv\Scripts\python.exe" -m pip install -r requirements.txt
 if errorlevel 1 goto :error
 
-echo [4/4] 正在启动微博超话周报工具...
+echo [4/4] Starting Weibo Super Topic Weekly Tool...
 echo.
-echo 命令行会实时滚动输出后台日志；结束时可按 Ctrl+C。
+echo The command line will show live backend logs. Press Ctrl+C to stop.
 echo.
-call ".venv\Scripts\python.exe" app.py
+call ".venv\Scripts\python.exe" app.py %*
 if errorlevel 1 goto :error
 
 goto :end
 
 :error
 echo.
-echo 运行失败。请保留这个窗口，并把上面的错误信息发给维护者。
+echo Run failed. Please keep this window and send the error text above to the maintainer.
 pause
 exit /b 1
 
 :end
 echo.
-echo 程序已退出。
+echo App exited.
 pause
 exit /b 0
