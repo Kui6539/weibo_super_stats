@@ -159,6 +159,26 @@ def launch_edge_debug_browser(profile_dir: Path | None = None, port: int = 9222)
     return endpoint
 
 
+def close_edge_debug_browser() -> bool:
+    for endpoint in _cdp_endpoints():
+        try:
+            version = _fetch_json(f"{endpoint}/json/version", timeout=1.5)
+        except Exception:
+            continue
+        if not isinstance(version, dict):
+            continue
+        browser_ws = str(version.get("webSocketDebuggerUrl") or "")
+        if not browser_ws:
+            continue
+        try:
+            with _CdpWebSocket(browser_ws) as ws:
+                ws.call("Browser.close")
+            return True
+        except Exception:
+            continue
+    return False
+
+
 def _find_edge_exe() -> Path | None:
     found = shutil.which("msedge")
     if found:

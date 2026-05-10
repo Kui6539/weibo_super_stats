@@ -35,6 +35,9 @@ from openpyxl.worksheet.worksheet import Worksheet
 SUPER_TOPIC_ID_PATTERN = re.compile(r"/p/([0-9a-fA-F]+)")
 FM_VIEW_MARKER = "FM.view("
 COMMENTS_API_URL = "https://weibo.com/ajax/statuses/buildComments"
+COMMENT_ANALYSIS_MIN_ROWS = 60
+COMMENT_ANALYSIS_RATIO = 0.36
+FINAL_COMMENT_ANALYSIS_LIMIT = 45
 EXPORT_COLUMN_MAP = [
     ("user_name", "作者昵称"),
     ("publish_time", "帖子发送时间"),
@@ -231,6 +234,10 @@ class WeiboSuperTopicCrawler:
 
         self._log("自动校准时间权重（目标拟合度 90%~93%）...")
         self._recalibrate_time_weight(all_posts, config)
+        for _ in range(2):
+            if not self._ensure_candidate_comment_analysis(all_posts, config):
+                break
+            self._recalibrate_time_weight(all_posts, config)
 
         all_posts.sort(key=lambda x: float(x.get("score", 0.0)), reverse=True)
         return all_posts
@@ -255,10 +262,31 @@ class WeiboSuperTopicCrawler:
         if not total:
             return
 
-        worker_count = _bounded_worker_count(config.comment_workers, total)
+        for post in rows:
+            self._set_estimated_score_fields(post, config)
+
+        comment_rows = [
+            post
+            for post in rows
+            if int(post.get("comments", 0) or 0) > 0
+            and str(post.get("post_id") or "").strip()
+            and str(post.get("author_id") or "").strip()
+        ]
+        analysis_rows = self._select_comment_analysis_rows(comment_rows, config)
+        analysis_total = len(analysis_rows)
+        skipped = len(comment_rows) - analysis_total
+        if skipped > 0:
+            self._log(f"快速评分已完成：评论结构精查 {analysis_total}/{len(comment_rows)} 条，跳过低潜力 {skipped} 条。")
+        elif comment_rows:
+            self._log(f"快速评分已完成：评论结构精查 {analysis_total}/{len(comment_rows)} 条。")
+
+        if not analysis_rows:
+            return
+
+        worker_count = _bounded_worker_count(config.comment_workers, analysis_total)
         if worker_count == 1:
-            for idx, post in enumerate(rows, start=1):
-                self._log(f"评分进度 {idx}/{total}: {post.get('post_id', '-')}")
+            for idx, post in enumerate(analysis_rows, start=1):
+                self._log(f"评分进度 {idx}/{analysis_total}: {post.get('post_id', '-')}")
                 self._enrich_score_fields(post, config)
             return
 
@@ -266,7 +294,7 @@ class WeiboSuperTopicCrawler:
         with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="score-enrich") as executor:
             futures = {
                 executor.submit(self._enrich_score_fields_with_private_session, post, config): post
-                for post in rows
+                for post in analysis_rows
             }
             for completed, future in enumerate(as_completed(futures), start=1):
                 post = futures[future]
@@ -274,12 +302,108 @@ class WeiboSuperTopicCrawler:
                     future.result()
                 except Exception as err:
                     self._log(
-                        f"评分失败 {completed}/{total}: {post.get('post_id', '-')}, "
+                        f"评分失败 {completed}/{analysis_total}: {post.get('post_id', '-')}, "
                         f"{type(err).__name__}: {err}"
                     )
-                    self._enrich_score_fields(post, config)
+                    self._set_estimated_score_fields(post, config)
+                if completed == analysis_total or completed % 5 == 0:
+                    self._log(f"评分进度 {completed}/{analysis_total}")
+
+    def _select_comment_analysis_rows(self, rows: list[dict], config: CrawlConfig) -> list[dict]:
+        if not rows:
+            return []
+        total = len(rows)
+        if total <= COMMENT_ANALYSIS_MIN_ROWS:
+            return rows
+        limit = min(
+            total,
+            max(
+                COMMENT_ANALYSIS_MIN_ROWS,
+                int(total * COMMENT_ANALYSIS_RATIO),
+                FINAL_COMMENT_ANALYSIS_LIMIT,
+            ),
+        )
+        ref_now = config.window_end or datetime.now()
+        return heapq.nlargest(
+            limit,
+            rows,
+            key=lambda post: self._estimated_priority_score(post, config, ref_now),
+        )
+
+    def _estimated_priority_score(self, post: dict, config: CrawlConfig, ref_now: datetime) -> float:
+        likes = int(post.get("likes", 0) or 0)
+        comments = int(post.get("comments", 0) or 0)
+        reposts = int(post.get("reposts", 0) or 0)
+        comment_factor = max(0.5, float(config.topic_comment_factor))
+        base = likes * 0.3 + comments * 0.5 * comment_factor + reposts * 0.1
+        publish_dt = parse_publish_datetime(str(post.get("publish_time") or ""))
+        return base * _calc_time_weight(publish_dt, ref_now)
+
+    def _set_estimated_score_fields(self, post: dict, config: CrawlConfig) -> None:
+        reposts = int(post.get("reposts", 0) or 0)
+        likes = int(post.get("likes", 0) or 0)
+        total_comments = int(post.get("comments", 0) or 0)
+        comment_factor = max(0.5, float(config.topic_comment_factor))
+        score = likes * 0.3 + total_comments * 0.5 * comment_factor + reposts * 0.1
+        publish_dt = parse_publish_datetime(str(post.get("publish_time") or ""))
+        weight_now = config.window_end or datetime.now()
+        time_weight = _calc_time_weight(publish_dt, weight_now)
+
+        post["non_author_comments"] = total_comments
+        post["author_replies"] = 0
+        post["topic_comment_factor"] = comment_factor
+        post["base_score"] = round(score, 4)
+        post["time_weight"] = round(time_weight, 4)
+        post["score"] = round(score * time_weight, 4)
+        post.setdefault("top_comment_1", "")
+        post.setdefault("top_comment_2", "")
+        post.setdefault("top_comment_3", "")
+        post.setdefault("top_comment_count", 0)
+        post.setdefault("top_comments_data", [])
+        post.setdefault("all_comments_data", [])
+        post.setdefault("comment_image_urls", "")
+        post["comment_analysis_done"] = total_comments <= 0
+
+    def _ensure_candidate_comment_analysis(self, posts: list[dict], config: CrawlConfig) -> bool:
+        candidate_pool = _select_weekly_posts(posts, limit=FINAL_COMMENT_ANALYSIS_LIMIT)
+        missing = [
+            post
+            for post in candidate_pool
+            if not bool(post.get("comment_analysis_done"))
+            and int(post.get("comments", 0) or 0) > 0
+            and str(post.get("post_id") or "").strip()
+            and str(post.get("author_id") or "").strip()
+        ]
+        if not missing:
+            return False
+
+        total = len(missing)
+        worker_count = _bounded_worker_count(config.comment_workers, total)
+        self._log(f"补全候选热评与评论结构：{total} 条，{worker_count} 个线程。")
+        if worker_count == 1:
+            for idx, post in enumerate(missing, start=1):
+                self._enrich_score_fields(post, config)
+                if idx == total or idx % 5 == 0:
+                    self._log(f"候选评论补全进度 {idx}/{total}")
+            return True
+
+        with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="candidate-comments") as executor:
+            futures = {
+                executor.submit(self._enrich_score_fields_with_private_session, post, config): post
+                for post in missing
+            }
+            for completed, future in enumerate(as_completed(futures), start=1):
+                post = futures[future]
+                try:
+                    future.result()
+                except Exception as err:
+                    self._log(
+                        f"候选评论补全失败 {completed}/{total}: {post.get('post_id', '-')}, "
+                        f"{type(err).__name__}: {err}"
+                    )
                 if completed == total or completed % 5 == 0:
-                    self._log(f"评分进度 {completed}/{total}")
+                    self._log(f"候选评论补全进度 {completed}/{total}")
+        return True
 
     def _enrich_score_fields_with_private_session(self, post: dict, config: CrawlConfig) -> None:
         session = self._new_session()
@@ -303,17 +427,19 @@ class WeiboSuperTopicCrawler:
         author_replies = 0
         top_comments: list[dict] = []
         all_comments: list[dict] = []
+        analysis_ok = total_comments <= 0
         if total_comments > 0 and post_id and author_id:
             try:
                 comment_analysis = self._analyze_comments(
                     post_id=post_id,
                     author_id=author_id,
-                    page_limit=config.comment_page_limit,
+                    page_limit=min(config.comment_page_limit, max(1, math.ceil(total_comments / 20))),
                     session=session,
                 )
                 author_replies = int(comment_analysis.get("author_replies", 0) or 0)
                 top_comments = list(comment_analysis.get("top_comments", []) or [])
                 all_comments = list(comment_analysis.get("all_comments", []) or [])
+                analysis_ok = True
             except Exception:
                 # 评论结构接口不稳定时，不让整批任务失败
                 author_replies = 0
@@ -347,6 +473,7 @@ class WeiboSuperTopicCrawler:
         post["top_comments_data"] = top_comments
         post["all_comments_data"] = all_comments
         post["comment_image_urls"] = " | ".join(_collect_top_comment_image_urls(top_comments))
+        post["comment_analysis_done"] = analysis_ok
 
     def _recalibrate_time_weight(self, posts: list[dict], config: CrawlConfig) -> None:
         rows = list(posts)
@@ -354,14 +481,16 @@ class WeiboSuperTopicCrawler:
             return
 
         # 只用周报候选帖评估拟合，和实际Top15逻辑保持一致
-        row_meta: list[tuple[dict, float, datetime | None, str]] = []
+        row_meta: list[tuple[dict, float, datetime | None, str, float | None]] = []
         all_dist: Counter[str] = Counter()
+        ref_now = config.window_end or datetime.now()
         for row in rows:
             publish_time = str(row.get("publish_time", "") or "")
             dt = parse_publish_datetime(publish_time)
             date_key = _date_key_from_publish_time(publish_time, dt)
             base_score = float(row.get("base_score", row.get("score", 0.0)) or 0.0)
-            row_meta.append((row, base_score, dt, date_key))
+            age_ratio = _time_age_ratio(dt, ref_now)
+            row_meta.append((row, base_score, dt, date_key, age_ratio))
             all_dist[date_key] += 1
 
         candidate_meta = [item for item in row_meta if not _should_skip_weekly_post(item[0])]
@@ -369,7 +498,6 @@ class WeiboSuperTopicCrawler:
         if len(candidate_rows) < 12:
             return
 
-        ref_now = config.window_end or datetime.now()
         if not all_dist:
             return
 
@@ -384,8 +512,8 @@ class WeiboSuperTopicCrawler:
             picked = heapq.nlargest(
                 top_n,
                 (
-                    (base_score * _calc_time_weight(dt, ref_now, strength=strength), date_key, row)
-                    for row, base_score, dt, date_key in candidate_meta
+                    (base_score * _time_weight_from_age_ratio(age_ratio, strength), date_key, row)
+                    for row, base_score, _dt, date_key, age_ratio in candidate_meta
                 ),
                 key=lambda x: x[0],
             )
@@ -432,8 +560,8 @@ class WeiboSuperTopicCrawler:
             )
 
         chosen_strength = float(best["strength"])
-        for row, base_score, dt, _date_key in row_meta:
-            w = _calc_time_weight(dt, ref_now, strength=chosen_strength)
+        for row, base_score, _dt, _date_key, age_ratio in row_meta:
+            w = _time_weight_from_age_ratio(age_ratio, chosen_strength)
             row["time_weight"] = round(w, 4)
             row["score"] = round(base_score * w, 4)
 
@@ -534,11 +662,11 @@ class WeiboSuperTopicCrawler:
             if max_id == "0":
                 break
 
-        comment_candidates.sort(
+        top_comments = heapq.nlargest(
+            3,
+            comment_candidates,
             key=lambda x: (int(x.get("like_counts", 0) or 0), str(x.get("created_at", ""))),
-            reverse=True,
         )
-        top_comments = comment_candidates[:3]
 
         return {
             "author_replies": sum(root_reply_counts.values()),
@@ -547,9 +675,14 @@ class WeiboSuperTopicCrawler:
         }
 
     def hydrate_full_text_posts(self, posts: list[dict], max_workers: int | None = None) -> None:
-        rows = list(posts)
+        all_rows = list(posts)
+        rows = [post for post in all_rows if _needs_full_text_hydration(post)]
         total = len(rows)
+        skipped = len(all_rows) - total
+        if skipped > 0:
+            self._log(f"正文校正筛选：{total}/{len(all_rows)} 条需要网络补全，跳过 {skipped} 条完整正文。")
         if not total:
+            self._log("正文校正：未发现疑似截断正文，跳过网络补全。")
             return
 
         worker_count = _bounded_worker_count(max_workers or 6, total)
@@ -949,10 +1082,19 @@ def _bounded_worker_count(requested: int | None, total: int) -> int:
 
 def _calc_time_weight(publish_dt: datetime | None, now: datetime, strength: float = 0.06) -> float:
     """轻量时间权重：strength 越大，时间偏置越强。"""
+    return _time_weight_from_age_ratio(_time_age_ratio(publish_dt, now), strength)
+
+
+def _time_age_ratio(publish_dt: datetime | None, now: datetime) -> float | None:
     if publish_dt is None:
-        return 1.0
+        return None
     age_hours = max(0.0, (now - publish_dt).total_seconds() / 3600.0)
-    age_ratio = min(1.0, age_hours / (7.0 * 24.0))
+    return min(1.0, age_hours / (7.0 * 24.0))
+
+
+def _time_weight_from_age_ratio(age_ratio: float | None, strength: float = 0.06) -> float:
+    if age_ratio is None:
+        return 1.0
     # 中心约 1.01；strength=0.06 时范围约 [1.04, 0.98]
     # 为避免极端强度时旧帖权重过低，设置下限保护。
     s = max(0.0, float(strength))
@@ -986,6 +1128,16 @@ def _looks_truncated_text(text: str) -> bool:
         return True
     # 超长但以半截字符结尾，通常是列表页截断文本
     return len(raw) >= 140 and not re.search(r"[。！？!?；;）)\]】”\"]$", raw)
+
+
+def _needs_full_text_hydration(post: dict) -> bool:
+    content = str(post.get("content") or "")
+    cleaned = _clean_text(content)
+    if not cleaned:
+        return True
+    if _looks_truncated_text(cleaned):
+        return True
+    return "展开全文" in content or "展开原文" in content
 
 
 def _remove_expand_hint(text: str) -> str:

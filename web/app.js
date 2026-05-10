@@ -12,6 +12,8 @@ const fields = {
 };
 
 const controls = {
+  themeToggle: $("themeToggleBtn"),
+  help: $("helpBtn"),
   start: $("startBtn"),
   edgeDebug: $("edgeDebugBtn"),
   autoCookie: $("autoCookieBtn"),
@@ -24,6 +26,7 @@ const controls = {
 };
 
 const ui = {
+  particleLayer: $("particleLayer"),
   layout: $("layout"),
   statusPill: $("statusPill"),
   saveState: $("saveState"),
@@ -38,6 +41,12 @@ const ui = {
   previewPanel: $("previewPanel"),
   previewContent: $("previewContent"),
   previewPath: $("previewPath"),
+  helpOverlay: $("helpOverlay"),
+  helpDialog: $("helpDialog"),
+  helpDragHandle: $("helpDragHandle"),
+  helpContent: $("helpContent"),
+  helpPath: $("helpPath"),
+  helpClose: $("helpCloseBtn"),
 };
 
 let pollTimer = null;
@@ -47,8 +56,10 @@ let autoPreviewResultKey = "";
 let configReady = false;
 let configSaveTimer = null;
 let currentRenderedJob = null;
-let clientEvents = [];
 let toastStack = null;
+let helpDragState = null;
+let particleFrame = 0;
+let particlePointer = null;
 
 function setBusy(button, busy, text) {
   if (!button) return;
@@ -101,6 +112,7 @@ function readForm() {
     topic_comment_factor: fields.topicCommentFactor.value,
     pause_seconds: fields.pauseSeconds.value,
     output_dir: fields.outputDir.value.trim(),
+    theme: currentTheme(),
   };
 }
 
@@ -109,6 +121,7 @@ function configPayload() {
     super_topic: fields.superTopic.value.trim(),
     cookie: fields.cookie.value.trim(),
     output_dir: fields.outputDir.value.trim(),
+    theme: currentTheme(),
   };
 }
 
@@ -213,6 +226,8 @@ function buildProgressSteps(job) {
   const hasSelectionDone = messages.some((message) => message.includes("人工筛选完成"));
   const hasImageStart = messages.some((message) => message.includes("正在下载帖子/评论图片"));
   const hasExportFiles = exportSavedCount > 0 || completed;
+  const imageDownloadDone =
+    Boolean(downloadProgress) && downloadProgress.current >= downloadProgress.total;
   const crawlFinished =
     completed ||
     exporting ||
@@ -292,7 +307,7 @@ function buildProgressSteps(job) {
   }
 
   if (hasSelectionDone || hasImageStart || downloadProgress || exporting || completed) {
-    const percent = completed || hasExportFiles ? 100 : downloadProgress ? (downloadProgress.current / downloadProgress.total) * 100 : 18;
+    const percent = completed || hasExportFiles || imageDownloadDone ? 100 : downloadProgress ? (downloadProgress.current / downloadProgress.total) * 100 : 18;
     steps.push(
       progressStep(
         "images",
@@ -303,20 +318,24 @@ function buildProgressSteps(job) {
             ? "正在下载帖子图片与热评图片"
             : "等待图片下载",
         percent,
-        completed || hasExportFiles ? "done" : "active",
+        completed || hasExportFiles || imageDownloadDone ? "done" : "active",
         downloadProgress ? `${downloadProgress.current}/${downloadProgress.total} 帖` : "阶段 5/6",
       ),
     );
   }
 
-  if (hasImageStart || hasExportFiles || completed) {
+  if (imageDownloadDone || hasExportFiles || completed) {
     steps.push(
       progressStep(
         "export",
         "生成导出文件",
-        completed ? "XLSX、CSV、DOCX、Markdown 与汇总文件已生成" : `已生成 ${exportSavedCount}/6 类文件`,
-        completed ? 100 : clamp((exportSavedCount / 6) * 100, hasExportFiles ? 20 : 0, 96),
-        completed ? "done" : hasExportFiles ? "active" : "pending",
+        completed
+          ? "XLSX、CSV、DOCX、Markdown 与汇总文件已生成"
+          : exportSavedCount
+            ? `已生成 ${exportSavedCount}/6 类文件`
+            : "图片下载完成，正在生成导出文件",
+        completed ? 100 : clamp((exportSavedCount / 6) * 100, imageDownloadDone || hasExportFiles ? 20 : 0, 96),
+        completed ? "done" : imageDownloadDone || hasExportFiles ? "active" : "pending",
         completed ? "6/6 文件" : `${exportSavedCount}/6 文件`,
       ),
     );
@@ -328,7 +347,7 @@ function buildProgressSteps(job) {
     markLastMutableStep(steps, "cancelled", "任务已取消");
   }
 
-  return steps.concat(clientEvents);
+  return steps;
 }
 
 function candidateStageProgress({ hasCandidates, selectionReady, exporting, completed, textProgress, scoreProgress, messages }) {
@@ -628,17 +647,7 @@ function startPolling() {
 function appendClientLog(message) {
   const text = String(message || "").trim();
   if (!text) return;
-  clientEvents.push(
-    progressStep(
-      `client-${Date.now()}-${clientEvents.length}`,
-      "页面提示",
-      text,
-      100,
-      /失败|错误|拒绝|异常/.test(text) ? "failed" : "done",
-    ),
-  );
-  clientEvents = clientEvents.slice(-3);
-  renderProgress(currentRenderedJob);
+  showToast(text, /失败|错误|拒绝|异常|failed|error/i.test(text) ? "error" : "info");
 }
 
 function showToast(message, state = "success") {
@@ -674,6 +683,7 @@ async function initDefaults() {
   fields.topicCommentFactor.value = defaults.topic_comment_factor || 1;
   fields.pauseSeconds.value = defaults.pause_seconds || 1;
   fields.outputDir.value = defaults.output_dir || "";
+  applyTheme(defaults.theme === "light" ? "light" : "dark");
   configReady = true;
   setSaveState("配置自动保存", "ready");
 }
@@ -694,7 +704,6 @@ async function startJob() {
     startPolling();
   } catch (err) {
     appendClientLog(err.message);
-    alert(err.message);
   } finally {
     setBusy(controls.start, false);
     refreshStatus();
@@ -708,7 +717,6 @@ async function launchEdgeDebug() {
     showToast(`调试 Edge 已启动：${data.endpoint}`);
   } catch (err) {
     appendClientLog(err.message);
-    alert(err.message);
   } finally {
     setBusy(controls.edgeDebug, false);
   }
@@ -720,10 +728,9 @@ async function autoCookie() {
     const data = await api("/api/cookie/auto", { method: "POST", body: "{}" });
     fields.cookie.value = data.cookie || "";
     await saveConfigNow();
-    showToast("Cookie 自动读取成功。");
+    showToast(data.debug_edge_closed ? "Cookie 自动读取成功，调试 Edge 已关闭。" : "Cookie 自动读取成功。");
   } catch (err) {
     appendClientLog(err.message);
-    alert(err.message);
   } finally {
     setBusy(controls.autoCookie, false);
   }
@@ -737,7 +744,6 @@ async function readClipboard() {
     appendClientLog("剪贴板内容已填入 Cookie 文本框。");
   } catch (err) {
     appendClientLog(`读取剪贴板失败：${err.message}`);
-    alert("浏览器拒绝读取剪贴板，请手动粘贴。");
   }
 }
 
@@ -753,7 +759,6 @@ async function extractCookie() {
     appendClientLog("已从粘贴内容中识别 Cookie。");
   } catch (err) {
     appendClientLog(err.message);
-    alert(err.message);
   } finally {
     setBusy(controls.extractCookie, false);
   }
@@ -770,7 +775,6 @@ async function submitSelection() {
     startPolling();
   } catch (err) {
     appendClientLog(err.message);
-    alert(err.message);
   } finally {
     setBusy(controls.select, false);
   }
@@ -786,7 +790,6 @@ async function cancelSelection() {
     renderJob(data.job);
   } catch (err) {
     appendClientLog(err.message);
-    alert(err.message);
   } finally {
     setBusy(controls.cancelSelect, false);
   }
@@ -799,7 +802,6 @@ async function openResultDir() {
     showToast(`已打开：${data.path || "导出目录"}`);
   } catch (err) {
     appendClientLog(err.message);
-    alert(err.message);
   } finally {
     setBusy(controls.openResultDir, false);
   }
@@ -824,9 +826,6 @@ async function loadMarkdownPreview(options = {}) {
     }
   } catch (err) {
     appendClientLog(err.message);
-    if (!isAuto) {
-      alert(err.message);
-    }
   } finally {
     if (!isAuto) {
       setBusy(controls.preview, false);
@@ -844,6 +843,67 @@ function hidePreview() {
   ui.layout.classList.remove("has-preview");
   ui.previewPanel.setAttribute("aria-hidden", "true");
   controls.preview.textContent = "预览 Markdown";
+}
+
+async function loadHelpDoc() {
+  try {
+    const data = await api("/api/help-doc");
+    ui.helpContent.innerHTML = renderMarkdown(data.markdown || "");
+    ui.helpPath.textContent = data.path || "";
+    showHelpDialog();
+  } catch (err) {
+    appendClientLog(err.message);
+  }
+}
+
+function showHelpDialog() {
+  ui.helpDialog.style.left = "";
+  ui.helpDialog.style.top = "";
+  ui.helpDialog.style.transform = "";
+  ui.helpOverlay.classList.add("visible");
+  ui.helpOverlay.setAttribute("aria-hidden", "false");
+  document.body.classList.add("help-modal-open");
+  ui.helpClose.focus();
+}
+
+function closeHelpDialog() {
+  ui.helpOverlay.classList.remove("visible");
+  ui.helpOverlay.setAttribute("aria-hidden", "true");
+  document.body.classList.remove("help-modal-open");
+}
+
+function startHelpDrag(event) {
+  if (event.button !== 0 || event.target.closest("button, a, input, textarea")) return;
+  const rect = ui.helpDialog.getBoundingClientRect();
+  helpDragState = {
+    offsetX: event.clientX - rect.left,
+    offsetY: event.clientY - rect.top,
+  };
+  ui.helpDialog.classList.add("dragging");
+  ui.helpDialog.style.left = `${rect.left}px`;
+  ui.helpDialog.style.top = `${rect.top}px`;
+  ui.helpDialog.style.transform = "none";
+  window.addEventListener("pointermove", dragHelpDialog);
+  window.addEventListener("pointerup", stopHelpDrag, { once: true });
+  event.preventDefault();
+}
+
+function dragHelpDialog(event) {
+  if (!helpDragState) return;
+  const rect = ui.helpDialog.getBoundingClientRect();
+  const margin = 12;
+  const maxLeft = Math.max(margin, window.innerWidth - rect.width - margin);
+  const maxTop = Math.max(margin, window.innerHeight - rect.height - margin);
+  const left = clamp(event.clientX - helpDragState.offsetX, margin, maxLeft);
+  const top = clamp(event.clientY - helpDragState.offsetY, margin, maxTop);
+  ui.helpDialog.style.left = `${left}px`;
+  ui.helpDialog.style.top = `${top}px`;
+}
+
+function stopHelpDrag() {
+  helpDragState = null;
+  ui.helpDialog.classList.remove("dragging");
+  window.removeEventListener("pointermove", dragHelpDialog);
 }
 
 function renderMarkdown(markdown) {
@@ -942,6 +1002,92 @@ function escapeAttr(value) {
   return escapeHtml(value);
 }
 
+function currentTheme() {
+  return document.body.classList.contains("light-theme") ? "light" : "dark";
+}
+
+function applyTheme(theme) {
+  const nextTheme = theme === "light" ? "light" : "dark";
+  document.body.classList.toggle("light-theme", nextTheme === "light");
+  controls.themeToggle.classList.toggle("is-light", nextTheme === "light");
+  controls.themeToggle.setAttribute(
+    "aria-label",
+    nextTheme === "light" ? "切换为暗色主题" : "切换为亮色主题",
+  );
+  controls.themeToggle.title = controls.themeToggle.getAttribute("aria-label") || "";
+}
+
+function initThemeToggle() {
+  applyTheme("dark");
+  controls.themeToggle.addEventListener("click", () => {
+    const nextTheme = currentTheme() === "light" ? "dark" : "light";
+    applyTheme(nextTheme);
+    saveConfigNow();
+  });
+}
+
+function initParticleLayer() {
+  if (!ui.particleLayer || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    return;
+  }
+  const fragment = document.createDocumentFragment();
+  const particleCount = Math.min(130, Math.max(72, Math.floor(window.innerWidth / 11)));
+  for (let index = 0; index < particleCount; index += 1) {
+    const particle = document.createElement("span");
+    particle.className = "particle";
+    particle.style.setProperty("--x", String(Math.random() * 100));
+    particle.style.setProperty("--size", `${(Math.random() * 1.8 + 1.1).toFixed(2)}px`);
+    particle.style.setProperty("--opacity", (Math.random() * 0.34 + 0.18).toFixed(2));
+    particle.style.setProperty("--duration", `${(Math.random() * 18 + 22).toFixed(2)}s`);
+    particle.style.setProperty("--delay", `${(-Math.random() * 30).toFixed(2)}s`);
+    particle.style.setProperty("--tilt", `${(Math.random() * 46 - 23).toFixed(2)}deg`);
+    fragment.appendChild(particle);
+  }
+  ui.particleLayer.replaceChildren(fragment);
+  window.addEventListener("pointermove", scheduleParticleRepel, { passive: true });
+  document.addEventListener("mouseleave", resetParticleRepel);
+  window.addEventListener("blur", resetParticleRepel);
+}
+
+function scheduleParticleRepel(event) {
+  particlePointer = { x: event.clientX, y: event.clientY };
+  if (particleFrame) return;
+  particleFrame = window.requestAnimationFrame(updateParticleRepel);
+}
+
+function updateParticleRepel() {
+  particleFrame = 0;
+  if (!particlePointer || !ui.particleLayer) return;
+  const radius = 150;
+  const maxOffset = 66;
+  for (const particle of ui.particleLayer.children) {
+    const rect = particle.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+    const dx = centerX - particlePointer.x;
+    const dy = centerY - particlePointer.y;
+    const distance = Math.hypot(dx, dy);
+    if (!distance || distance > radius) {
+      particle.style.setProperty("--repel-x", "0px");
+      particle.style.setProperty("--repel-y", "0px");
+      continue;
+    }
+    const force = ((radius - distance) / radius) ** 2 * maxOffset;
+    particle.style.setProperty("--repel-x", `${((dx / distance) * force).toFixed(2)}px`);
+    particle.style.setProperty("--repel-y", `${((dy / distance) * force).toFixed(2)}px`);
+  }
+}
+
+function resetParticleRepel() {
+  particlePointer = null;
+  if (!ui.particleLayer) return;
+  for (const particle of ui.particleLayer.children) {
+    particle.style.setProperty("--repel-x", "0px");
+    particle.style.setProperty("--repel-y", "0px");
+  }
+}
+
+controls.help.addEventListener("click", loadHelpDoc);
 controls.start.addEventListener("click", startJob);
 controls.edgeDebug.addEventListener("click", launchEdgeDebug);
 controls.autoCookie.addEventListener("click", autoCookie);
@@ -957,13 +1103,31 @@ controls.preview.addEventListener("click", () => {
     hidePreview();
   }
 });
+ui.helpClose.addEventListener("click", closeHelpDialog);
+ui.helpOverlay.addEventListener("click", (event) => {
+  if (event.target === ui.helpOverlay) {
+    closeHelpDialog();
+  }
+});
+ui.helpDragHandle.addEventListener("pointerdown", startHelpDrag);
+window.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && ui.helpOverlay.classList.contains("visible")) {
+    closeHelpDialog();
+  }
+});
 
 [fields.superTopic, fields.cookie, fields.outputDir].forEach((field) => {
   field.addEventListener("input", scheduleConfigSave);
 });
 
+initThemeToggle();
+initParticleLayer();
+
 initDefaults()
-  .then(refreshStatus)
+  .then(async () => {
+    await refreshStatus();
+    await loadHelpDoc();
+  })
   .catch((err) => {
     appendClientLog(err.message);
   });

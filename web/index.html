@@ -7,12 +7,18 @@
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
+    <div id="particleLayer" class="particle-layer" aria-hidden="true"></div>
     <header class="topbar">
       <div>
         <h1>微博超话周报工具</h1>
         <p id="saveState" class="muted">配置自动保存</p>
       </div>
       <div class="topbar-actions">
+        <button id="themeToggleBtn" type="button" class="secondary theme-toggle" aria-label="切换为亮色主题">
+          <span class="theme-icon theme-sun" aria-hidden="true">☀</span>
+          <span class="theme-icon theme-moon" aria-hidden="true">☾</span>
+        </button>
+        <button id="helpBtn" type="button" class="secondary">使用说明</button>
         <button id="previewBtn" type="button" class="secondary hidden" disabled>预览 Markdown</button>
         <div class="status-pill" id="statusPill">未开始</div>
       </div>
@@ -121,6 +127,19 @@
         <article id="previewContent" class="markdown-body"></article>
       </section>
     </main>
+
+    <div id="helpOverlay" class="help-overlay" aria-hidden="true">
+      <section id="helpDialog" class="help-dialog" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
+        <div id="helpDragHandle" class="side-toolbar help-toolbar">
+          <div>
+            <h2 id="helpTitle">使用说明</h2>
+            <p id="helpPath" class="muted"></p>
+          </div>
+          <button id="helpCloseBtn" type="button" class="secondary">关闭</button>
+        </div>
+        <article id="helpContent" class="markdown-body help-content"></article>
+      </section>
+    </div>
 
     <script src="/app.js" defer></script>
   </body>

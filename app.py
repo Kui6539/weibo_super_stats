@@ -17,6 +17,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from cookie_helper import (
     CookieFetchError,
+    close_edge_debug_browser,
     extract_cookie_from_text,
     get_weibo_cookie_header,
     launch_edge_debug_browser,
@@ -42,6 +43,8 @@ APP_HOST = "127.0.0.1"
 APP_PORT = 8765
 WEB_ROOT = Path(__file__).with_name("web")
 CONFIG_PATH = Path(__file__).with_name("weibo_stats_config.json")
+HELP_DOC_PATH = Path(__file__).with_name("Cookie获取简短教程.md")
+BACKGROUND_PATH = WEB_ROOT / "Background.png"
 DEFAULT_SUPER_TOPIC = "https://weibo.com/p/1008080c5ef5dee7defd2f23ad650e84339319/super_index"
 ACTIVE_STATUSES = {"running", "awaiting_selection", "exporting"}
 
@@ -144,10 +147,14 @@ def load_saved_config() -> dict[str, str]:
         return {}
     if not isinstance(data, dict):
         return {}
+    theme = str(data.get("theme") or "").strip().lower()
+    if theme not in {"dark", "light"}:
+        theme = ""
     return {
         "super_topic": str(data.get("super_topic") or "").strip(),
         "cookie": str(data.get("cookie") or "").strip(),
         "output_dir": str(data.get("output_dir") or "").strip(),
+        "theme": theme,
     }
 
 
@@ -156,6 +163,10 @@ def save_user_config(payload: dict[str, Any]) -> dict[str, str]:
     for key in ("super_topic", "cookie", "output_dir"):
         if key in payload:
             current[key] = str(payload.get(key) or "").strip()
+    if "theme" in payload:
+        theme = str(payload.get("theme") or "").strip().lower()
+        if theme in {"dark", "light"}:
+            current["theme"] = theme
     CONFIG_PATH.write_text(
         json.dumps(current, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
@@ -458,6 +469,7 @@ def app_defaults() -> dict[str, Any]:
         "window_start": datetime_local_value(window_start),
         "window_end": datetime_local_value(window_end),
         "output_dir": str(Path.cwd() / "output"),
+        "theme": "dark",
     } | {key: value for key, value in saved.items() if value}
 
 
@@ -478,6 +490,15 @@ class AppRequestHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/report-asset":
             self._send_report_asset()
+            return
+        if path == "/api/help-doc":
+            self._send_help_doc()
+            return
+        if path == "/Background.png":
+            if BACKGROUND_PATH.exists() and BACKGROUND_PATH.is_file():
+                self._send_static(BACKGROUND_PATH)
+            else:
+                self._send_json({"error": "Background image not found"}, HTTPStatus.NOT_FOUND)
             return
         if path == "/favicon.ico":
             self.send_response(HTTPStatus.NO_CONTENT)
@@ -524,7 +545,10 @@ class AppRequestHandler(BaseHTTPRequestHandler):
                 console_log("正在自动读取浏览器 Cookie...")
                 cookie = get_weibo_cookie_header()
                 console_log("Cookie 自动读取成功。")
-                self._send_json({"cookie": cookie})
+                debug_edge_closed = close_edge_debug_browser()
+                if debug_edge_closed:
+                    console_log("调试 Edge 已自动关闭。")
+                self._send_json({"cookie": cookie, "debug_edge_closed": debug_edge_closed})
                 return
             if path == "/api/cookie/edge-debug":
                 console_log("正在打开调试 Edge...")
@@ -589,6 +613,16 @@ class AppRequestHandler(BaseHTTPRequestHandler):
             self._send_json({"error": "资源不存在。"}, HTTPStatus.NOT_FOUND)
             return
         self._send_static(asset_path)
+
+    def _send_help_doc(self) -> None:
+        if not HELP_DOC_PATH.exists() or not HELP_DOC_PATH.is_file():
+            self._send_json({"error": "教程文档不存在。"}, HTTPStatus.NOT_FOUND)
+            return
+        try:
+            markdown = HELP_DOC_PATH.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            markdown = HELP_DOC_PATH.read_text(encoding="utf-8-sig")
+        self._send_json({"markdown": markdown, "path": str(HELP_DOC_PATH)})
 
     def _read_json(self) -> dict[str, Any]:
         length = int(self.headers.get("Content-Length", "0") or "0")
