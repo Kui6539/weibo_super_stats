@@ -170,6 +170,15 @@ def compact_content(value: Any, max_chars: int = 420) -> str:
     return content
 
 
+def visible_job_result(result: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(result, dict):
+        return None
+    run_dir = str(result.get("run_dir") or "").strip()
+    if run_dir and not Path(run_dir).exists():
+        return None
+    return dict(result)
+
+
 def to_int(value: Any) -> int:
     try:
         return int(value or 0)
@@ -241,7 +250,7 @@ class CrawlJob:
                 "logs": list(self.logs),
                 "candidates": list(self.candidates),
                 "required_pick_count": self.required_pick_count,
-                "result": self.result,
+                "result": visible_job_result(self.result),
                 "error": self.error,
             }
 

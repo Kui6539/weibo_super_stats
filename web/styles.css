@@ -90,6 +90,49 @@ button:disabled {
   gap: 10px;
 }
 
+.toast-stack {
+  position: fixed;
+  top: 82px;
+  right: 24px;
+  z-index: 20;
+  display: grid;
+  gap: 10px;
+  width: min(360px, calc(100vw - 32px));
+  pointer-events: none;
+}
+
+.toast {
+  border: 1px solid #a7d7b5;
+  border-radius: 7px;
+  padding: 11px 13px;
+  color: var(--success);
+  background: rgba(239, 250, 242, 0.98);
+  box-shadow: 0 12px 28px rgba(24, 32, 38, 0.12);
+  font-size: 13px;
+  line-height: 1.45;
+  opacity: 0;
+  transform: translateY(-8px);
+  animation: toast-in 180ms ease forwards;
+}
+
+.toast.leaving {
+  animation: toast-out 240ms ease forwards;
+}
+
+@keyframes toast-in {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes toast-out {
+  to {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+}
+
 h1,
 h2,
 p {
@@ -287,28 +330,223 @@ h2 {
 }
 
 
-.logbox {
-  height: 360px;
-  overflow: auto;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 10px;
-  background: #101820;
-  color: #dce7ee;
-  font-family: Consolas, "Cascadia Mono", monospace;
-  font-size: 13px;
-  line-height: 1.55;
-}
-
-.log-line {
+.progress-stack {
   display: grid;
-  grid-template-columns: 72px minmax(0, 1fr);
-  gap: 10px;
-  padding: 2px 0;
+  gap: 12px;
 }
 
-.log-time {
-  color: #8fb6c8;
+.progress-item {
+  position: relative;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 12px;
+  background: #ffffff;
+  box-shadow: 0 8px 18px rgba(24, 32, 38, 0.045);
+  opacity: 0;
+  transform: translateY(12px) scale(0.985);
+  animation: progress-item-in 260ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  transition:
+    border-color 220ms ease,
+    background 220ms ease,
+    box-shadow 220ms ease;
+}
+
+.progress-item::before {
+  display: none;
+}
+
+.progress-item.active,
+.progress-item.waiting {
+  border-color: #94d2bd;
+  background: #fbfefd;
+  box-shadow: 0 10px 24px rgba(22, 122, 107, 0.08);
+}
+
+.progress-icon {
+  width: 14px;
+  height: 14px;
+  margin-top: 2px;
+  border: 2px solid #b7c1ca;
+  border-radius: 999px;
+  background: #ffffff;
+}
+
+.progress-item.active .progress-icon {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 4px rgba(22, 122, 107, 0.12);
+}
+
+.progress-item.waiting .progress-icon {
+  border-color: #d08b00;
+  box-shadow: 0 0 0 4px rgba(208, 139, 0, 0.12);
+}
+
+.progress-item.done .progress-icon {
+  border-color: var(--success);
+  background: var(--success);
+}
+
+.progress-item.failed .progress-icon,
+.progress-item.cancelled .progress-icon {
+  border-color: var(--danger);
+  background: var(--danger);
+}
+
+.progress-main {
+  min-width: 0;
+}
+
+.progress-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 6px;
+}
+
+.progress-copy {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 7px;
+  min-width: 0;
+}
+
+.progress-title {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.progress-meta {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.progress-stats {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 92px;
+  text-align: right;
+}
+
+.progress-state {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 7px;
+  color: var(--muted);
+  background: #f8fafb;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.progress-item.active .progress-state {
+  border-color: #94d2bd;
+  color: var(--accent-strong);
+  background: #edf8f5;
+}
+
+.progress-item.waiting .progress-state {
+  border-color: #e4b44e;
+  color: var(--warn);
+  background: #fff8e8;
+}
+
+.progress-item.done .progress-state {
+  border-color: #a7d7b5;
+  color: var(--success);
+  background: #effaf2;
+}
+
+.progress-item.failed .progress-state,
+.progress-item.cancelled .progress-state {
+  border-color: #f2b8b5;
+  color: var(--danger);
+  background: #fff3f2;
+}
+
+.progress-percent {
+  min-width: 45px;
+  color: #3f4d59;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.progress-detail {
+  min-height: 18px;
+  margin-bottom: 9px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.progress-track {
+  position: relative;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #edf1f4;
+  box-shadow: inset 0 0 0 1px rgba(24, 32, 38, 0.03);
+}
+
+.progress-fill {
+  position: relative;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #167a6b, #3c86d1);
+  transition: width 520ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.progress-item.active .progress-fill,
+.progress-item.waiting .progress-fill {
+  background: linear-gradient(90deg, #167a6b, #3c86d1);
+}
+
+.progress-item.active .progress-fill::after,
+.progress-item.waiting .progress-fill::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(110deg, transparent 0 30%, rgba(255, 255, 255, 0.38) 45%, transparent 62% 100%);
+  animation: progress-stripe 1.25s linear infinite;
+}
+
+.progress-item.waiting .progress-fill {
+  background: linear-gradient(90deg, #d08b00, #e4b44e);
+}
+
+.progress-item.done .progress-fill {
+  background: linear-gradient(90deg, #146c43, #3fa06a);
+}
+
+.progress-item.failed .progress-fill,
+.progress-item.cancelled .progress-fill {
+  background: linear-gradient(90deg, #b42318, #d95c4f);
+}
+
+@keyframes progress-item-in {
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes progress-stripe {
+  from {
+    transform: translateX(-120%);
+  }
+  to {
+    transform: translateX(120%);
+  }
 }
 
 .candidate-panel,
@@ -523,8 +761,8 @@ h2 {
     transform: translateY(0);
   }
 
-  .logbox {
-    height: 300px;
+  .progress-stack {
+    gap: 9px;
   }
 }
 
@@ -539,6 +777,13 @@ h2 {
   .topbar-actions {
     align-items: stretch;
     width: 100%;
+  }
+
+  .toast-stack {
+    top: 120px;
+    right: 16px;
+    left: 16px;
+    width: auto;
   }
 
   .grid.two,

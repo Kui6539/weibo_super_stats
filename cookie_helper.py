@@ -16,11 +16,10 @@ from urllib.request import Request, urlopen
 
 CDP_DEFAULT_ENDPOINTS = ("http://127.0.0.1:9222", "http://localhost:9222")
 CDP_ENV_VAR = "WEIBO_COOKIE_CDP_URL"
-WEIBO_LOGIN_COOKIE_NAMES = {"SSOLoginState", "ALF"}
+WEIBO_LOGIN_COOKIE_NAMES = {"SUB"}
 WEIBO_COOKIE_URLS = (
     "https://weibo.com/",
     "https://weibo.com/p/1008080c5ef5dee7defd2f23ad650e84339319/super_index",
-    "https://m.weibo.cn/",
 )
 
 
@@ -69,7 +68,7 @@ def get_weibo_cookie_header() -> str:
         ) from exc
 
     browser_funcs = [("Edge", bc3.edge), ("Chrome", bc3.chrome)]
-    domains = ("weibo.com", "m.weibo.cn")
+    domains = ("weibo.com",)
     read_errors: list[str] = []
     no_cookie_errors: list[str] = []
 
@@ -201,6 +200,8 @@ def _try_cdp_endpoint(endpoint: str) -> tuple[str, str | None]:
         version = _fetch_json(f"{endpoint}/json/version", timeout=1.5)
     except Exception as exc:
         return "", f"未连接到调试端口（{type(exc).__name__}: {exc}）"
+    if not isinstance(version, dict):
+        return "", "CDP json/version 返回格式异常"
 
     target_errors: list[str] = []
     for ws_url in _iter_cdp_page_websockets(endpoint):
@@ -245,7 +246,10 @@ def _iter_cdp_page_websockets(endpoint: str) -> list[str]:
     try:
         req = Request(f"{endpoint}/json/new?https://weibo.com/", method="PUT")
         target = _fetch_json(req, timeout=2.5)
-        ws_url = str(target.get("webSocketDebuggerUrl") or "")
+        if isinstance(target, dict):
+            ws_url = str(target.get("webSocketDebuggerUrl") or "")
+        else:
+            ws_url = ""
         if ws_url:
             urls.append(ws_url)
     except Exception:
@@ -272,7 +276,7 @@ def _try_cdp_cookies_from_browser_ws(ws_url: str) -> tuple[str, str | None]:
     try:
         with _CdpWebSocket(ws_url) as ws:
             result = ws.call("Storage.getCookies")
-        cookie = _cdp_cookies_to_header(result.get("cookies", []), strict_applicable=True)
+        cookie = _cdp_cookies_to_header(result.get("cookies", []))
         if cookie:
             return cookie, None
         errors.append("Storage.getCookies: 未找到微博登录态 Cookie")
@@ -281,19 +285,21 @@ def _try_cdp_cookies_from_browser_ws(ws_url: str) -> tuple[str, str | None]:
     return "", "；".join(errors)
 
 
-def _cdp_cookies_to_header(cookies: list[dict], strict_applicable: bool = False) -> str:
-    pairs: dict[str, str] = {}
+def _cdp_cookies_to_header(cookies: list[dict]) -> str:
+    selected: dict[str, tuple[int, str]] = {}
     for item in cookies:
         domain = str(item.get("domain") or "")
         name = str(item.get("name") or "")
         value = str(item.get("value") or "")
         if not name or not value:
             continue
-        if strict_applicable and not _cookie_domain_applies_to_weibo(domain):
+        if not _cookie_domain_applies_to_weibo(domain):
             continue
-        if "weibo.com" not in domain and ".weibo.cn" not in domain:
-            continue
-        pairs[name] = value
+        rank = _cookie_rank_for_weibo(item)
+        previous = selected.get(name)
+        if previous is None or rank > previous[0]:
+            selected[name] = (rank, value)
+    pairs = {name: value for name, (_, value) in selected.items()}
     if not _has_weibo_login_cookie(pairs):
         return ""
     return _pairs_to_header(pairs)
@@ -301,7 +307,12 @@ def _cdp_cookies_to_header(cookies: list[dict], strict_applicable: bool = False)
 
 def _cookie_domain_applies_to_weibo(domain: str) -> bool:
     clean = domain.lstrip(".").lower()
-    return clean == "weibo.com" or clean.endswith(".weibo.com")
+    return clean == "weibo.com"
+
+
+def _cookie_rank_for_weibo(item: dict) -> int:
+    path = str(item.get("path") or "")
+    return 2 if path in {"", "/"} else 1
 
 
 def _fetch_json(url_or_request, timeout: float) -> dict | list:
@@ -498,7 +509,7 @@ def _jar_to_cookie_header(jar) -> str:
         value = getattr(item, "value", "") or ""
         if not name or not value:
             continue
-        if "weibo.com" not in domain and ".weibo.cn" not in domain:
+        if not _cookie_domain_applies_to_weibo(domain):
             continue
         pairs[name] = value
     if not pairs:

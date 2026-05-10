@@ -2,6 +2,7 @@
 
 import csv
 import hashlib
+import heapq
 import json
 import math
 import re
@@ -13,8 +14,8 @@ from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from urllib.parse import parse_qsl
 from typing import Any, cast
+from urllib.parse import parse_qsl
 
 import requests
 from bs4 import BeautifulSoup, Tag
@@ -80,6 +81,8 @@ class CrawlConfig:
     days_window: int = 7
     topic_comment_factor: float = 1.0
     comment_page_limit: int = 8
+    text_workers: int = 6
+    comment_workers: int = 6
     window_start: datetime | None = None
     window_end: datetime | None = None
     carryover_hours: int = 0
@@ -108,6 +111,11 @@ class WeiboSuperTopicCrawler:
                 "Accept": "application/json, text/plain, */*",
             }
         )
+
+    def _new_session(self) -> requests.Session:
+        session = requests.Session()
+        session.headers.update(self.session.headers)
+        return session
 
     def _log(self, message: str) -> None:
         if self.progress_callback:
@@ -216,13 +224,10 @@ class WeiboSuperTopicCrawler:
             )
 
         self._log("补全帖子正文（包含疑似截断内容）...")
-        self.hydrate_full_text_posts(all_posts)
+        self.hydrate_full_text_posts(all_posts, max_workers=config.text_workers)
 
         self._log("开始计算评分（包含评论结构估算与时间权重）...")
-        for idx, post in enumerate(all_posts, start=1):
-            self._log(f"评分进度 {idx}/{len(all_posts)}: {post.get('post_id', '-')}")
-            self._enrich_score_fields(post, config)
-            time.sleep(min(0.2, max(config.pause_seconds, 0) / 5))
+        self.enrich_score_fields(all_posts, config)
 
         self._log("自动校准时间权重（目标拟合度 90%~93%）...")
         self._recalibrate_time_weight(all_posts, config)
@@ -244,7 +249,51 @@ class WeiboSuperTopicCrawler:
             raise CrawlError(f"加载超话页面失败，HTTP {resp.status_code}")
         return text
 
-    def _enrich_score_fields(self, post: dict, config: CrawlConfig) -> None:
+    def enrich_score_fields(self, posts: list[dict], config: CrawlConfig) -> None:
+        rows = list(posts)
+        total = len(rows)
+        if not total:
+            return
+
+        worker_count = _bounded_worker_count(config.comment_workers, total)
+        if worker_count == 1:
+            for idx, post in enumerate(rows, start=1):
+                self._log(f"评分进度 {idx}/{total}: {post.get('post_id', '-')}")
+                self._enrich_score_fields(post, config)
+            return
+
+        self._log(f"评论结构与基础评分并行处理：{worker_count} 个线程。")
+        with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="score-enrich") as executor:
+            futures = {
+                executor.submit(self._enrich_score_fields_with_private_session, post, config): post
+                for post in rows
+            }
+            for completed, future in enumerate(as_completed(futures), start=1):
+                post = futures[future]
+                try:
+                    future.result()
+                except Exception as err:
+                    self._log(
+                        f"评分失败 {completed}/{total}: {post.get('post_id', '-')}, "
+                        f"{type(err).__name__}: {err}"
+                    )
+                    self._enrich_score_fields(post, config)
+                if completed == total or completed % 5 == 0:
+                    self._log(f"评分进度 {completed}/{total}")
+
+    def _enrich_score_fields_with_private_session(self, post: dict, config: CrawlConfig) -> None:
+        session = self._new_session()
+        try:
+            self._enrich_score_fields(post, config, session=session)
+        finally:
+            session.close()
+
+    def _enrich_score_fields(
+        self,
+        post: dict,
+        config: CrawlConfig,
+        session: requests.Session | None = None,
+    ) -> None:
         reposts = int(post.get("reposts", 0) or 0)
         likes = int(post.get("likes", 0) or 0)
         total_comments = int(post.get("comments", 0) or 0)
@@ -254,12 +303,13 @@ class WeiboSuperTopicCrawler:
         author_replies = 0
         top_comments: list[dict] = []
         all_comments: list[dict] = []
-        if post_id and author_id:
+        if total_comments > 0 and post_id and author_id:
             try:
                 comment_analysis = self._analyze_comments(
                     post_id=post_id,
                     author_id=author_id,
                     page_limit=config.comment_page_limit,
+                    session=session,
                 )
                 author_replies = int(comment_analysis.get("author_replies", 0) or 0)
                 top_comments = list(comment_analysis.get("top_comments", []) or [])
@@ -304,13 +354,22 @@ class WeiboSuperTopicCrawler:
             return
 
         # 只用周报候选帖评估拟合，和实际Top15逻辑保持一致
-        candidate_rows = [row for row in rows if not _should_skip_weekly_post(row)]
+        row_meta: list[tuple[dict, float, datetime | None, str]] = []
+        all_dist: Counter[str] = Counter()
+        for row in rows:
+            publish_time = str(row.get("publish_time", "") or "")
+            dt = parse_publish_datetime(publish_time)
+            date_key = _date_key_from_publish_time(publish_time, dt)
+            base_score = float(row.get("base_score", row.get("score", 0.0)) or 0.0)
+            row_meta.append((row, base_score, dt, date_key))
+            all_dist[date_key] += 1
+
+        candidate_meta = [item for item in row_meta if not _should_skip_weekly_post(item[0])]
+        candidate_rows = [item[0] for item in candidate_meta]
         if len(candidate_rows) < 12:
             return
 
         ref_now = config.window_end or datetime.now()
-        # 用“当周全部帖子”做基准，和 summary.txt 里的拟合口径一致
-        all_dist = build_summary(rows).get("posts_by_date", {})
         if not all_dist:
             return
 
@@ -322,19 +381,18 @@ class WeiboSuperTopicCrawler:
 
         results: list[dict] = []
         for strength in strengths:
-            scored_rows: list[tuple[float, dict]] = []
-            for row in candidate_rows:
-                base_score = float(row.get("base_score", row.get("score", 0.0)) or 0.0)
-                dt = parse_publish_datetime(str(row.get("publish_time", "") or ""))
-                w = _calc_time_weight(dt, ref_now, strength=strength)
-                scored_rows.append((base_score * w, row))
-
-            scored_rows.sort(key=lambda x: x[0], reverse=True)
-            picked = [item[1] for item in scored_rows[:top_n]]
-            picked_dist = build_summary(picked).get("posts_by_date", {})
+            picked = heapq.nlargest(
+                top_n,
+                (
+                    (base_score * _calc_time_weight(dt, ref_now, strength=strength), date_key, row)
+                    for row, base_score, dt, date_key in candidate_meta
+                ),
+                key=lambda x: x[0],
+            )
+            picked_dist = Counter(item[1] for item in picked)
             fit_info = _calc_date_distribution_fit(all_dist, picked_dist)
             fit_score = float(fit_info.get("fit_score", 0.0) or 0.0)
-            avg_score = sum(x[0] for x in scored_rows[:top_n]) / max(1, top_n)
+            avg_score = sum(item[0] for item in picked) / max(1, top_n)
             in_range = target_low <= fit_score <= target_high
             results.append(
                 {
@@ -374,9 +432,7 @@ class WeiboSuperTopicCrawler:
             )
 
         chosen_strength = float(best["strength"])
-        for row in rows:
-            base_score = float(row.get("base_score", row.get("score", 0.0)) or 0.0)
-            dt = parse_publish_datetime(str(row.get("publish_time", "") or ""))
+        for row, base_score, dt, _date_key in row_meta:
             w = _calc_time_weight(dt, ref_now, strength=chosen_strength)
             row["time_weight"] = round(w, 4)
             row["score"] = round(base_score * w, 4)
@@ -392,7 +448,9 @@ class WeiboSuperTopicCrawler:
         post_id: str,
         author_id: str,
         page_limit: int,
+        session: requests.Session | None = None,
     ) -> dict:
+        http = session or self.session
         max_id = "0"
         seen_root_ids: set[str] = set()
         seen_comment_ids: set[str] = set()
@@ -411,7 +469,7 @@ class WeiboSuperTopicCrawler:
             if max_id != "0":
                 params["max_id"] = max_id
 
-            resp = self.session.get(
+            resp = http.get(
                 COMMENTS_API_URL,
                 params=params,
                 headers={"Referer": f"https://weibo.com/detail/{post_id}", "Origin": "https://weibo.com"},
@@ -488,31 +546,72 @@ class WeiboSuperTopicCrawler:
             "all_comments": comment_candidates,
         }
 
-    def hydrate_full_text_posts(self, posts: list[dict]) -> None:
-        total = len(posts)
-        for idx, post in enumerate(posts, start=1):
-            content = str(post.get("content") or "")
-            post_id = str(post.get("post_id") or "")
-            if not post_id and not str(post.get("post_url") or "").strip():
-                continue
-            self._log(f"正文校正 {idx}/{total}: {post_id or '-'}")
-            full_text, extra_image_urls = self._fetch_post_full_text(post)
-            cleaned_old = _strip_specific_topic_tags(_remove_expand_hint(_clean_text(content)))
-            report_old = _strip_specific_topic_tags_preserve(_remove_expand_hint_preserve(content))
-            cleaned_new = _strip_specific_topic_tags(_remove_expand_hint(_clean_text(full_text)))
-            report_new = _strip_specific_topic_tags_preserve(_remove_expand_hint_preserve(full_text))
-            if _should_replace_content(cleaned_old, cleaned_new):
-                post["content"] = report_new or cleaned_new
-            else:
-                post["content"] = report_old or cleaned_old
-            if extra_image_urls:
-                merged = _dedup_keep_order(
-                    _split_multi_urls(str(post.get("original_image_urls") or ""), sep="|") + extra_image_urls
-                )
-                post["original_image_urls"] = " | ".join(merged)
-                post["image_count"] = len(merged)
+    def hydrate_full_text_posts(self, posts: list[dict], max_workers: int | None = None) -> None:
+        rows = list(posts)
+        total = len(rows)
+        if not total:
+            return
 
-    def _fetch_post_full_text(self, post: dict) -> tuple[str, list[str]]:
+        worker_count = _bounded_worker_count(max_workers or 6, total)
+        if worker_count == 1:
+            for idx, post in enumerate(rows, start=1):
+                post_id = str(post.get("post_id") or "")
+                self._log(f"正文校正 {idx}/{total}: {post_id or '-'}")
+                self._hydrate_one_post(post)
+            return
+
+        self._log(f"正文校正并行处理：{worker_count} 个线程。")
+        with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="text-hydrate") as executor:
+            futures = {
+                executor.submit(self._hydrate_one_post_with_private_session, post): post
+                for post in rows
+            }
+            for completed, future in enumerate(as_completed(futures), start=1):
+                post = futures[future]
+                try:
+                    future.result()
+                except Exception as err:
+                    self._log(
+                        f"正文校正失败 {completed}/{total}: {post.get('post_id', '-')}, "
+                        f"{type(err).__name__}: {err}"
+                    )
+                if completed == total or completed % 5 == 0:
+                    self._log(f"正文校正进度 {completed}/{total}")
+
+    def _hydrate_one_post_with_private_session(self, post: dict) -> None:
+        session = self._new_session()
+        try:
+            self._hydrate_one_post(post, session=session)
+        finally:
+            session.close()
+
+    def _hydrate_one_post(self, post: dict, session: requests.Session | None = None) -> None:
+        content = str(post.get("content") or "")
+        post_id = str(post.get("post_id") or "")
+        if not post_id and not str(post.get("post_url") or "").strip():
+            return
+        full_text, extra_image_urls = self._fetch_post_full_text(post, session=session)
+        cleaned_old = _strip_specific_topic_tags(_remove_expand_hint(_clean_text(content)))
+        report_old = _strip_specific_topic_tags_preserve(_remove_expand_hint_preserve(content))
+        cleaned_new = _strip_specific_topic_tags(_remove_expand_hint(_clean_text(full_text)))
+        report_new = _strip_specific_topic_tags_preserve(_remove_expand_hint_preserve(full_text))
+        if _should_replace_content(cleaned_old, cleaned_new):
+            post["content"] = report_new or cleaned_new
+        else:
+            post["content"] = report_old or cleaned_old
+        if extra_image_urls:
+            merged = _dedup_keep_order(
+                _split_multi_urls(str(post.get("original_image_urls") or ""), sep="|") + extra_image_urls
+            )
+            post["original_image_urls"] = " | ".join(merged)
+            post["image_count"] = len(merged)
+
+    def _fetch_post_full_text(
+        self,
+        post: dict,
+        session: requests.Session | None = None,
+    ) -> tuple[str, list[str]]:
+        http = session or self.session
         post_id = str(post.get("post_id") or "")
         post_url = str(post.get("post_url") or "")
         referer = post_url or (f"https://weibo.com/detail/{post_id}" if post_id else "https://weibo.com/")
@@ -521,7 +620,7 @@ class WeiboSuperTopicCrawler:
 
         if post_id:
             try:
-                resp = self.session.get(
+                resp = http.get(
                     "https://weibo.com/ajax/statuses/show",
                     params={"id": post_id},
                     headers={"Referer": referer, "Origin": "https://weibo.com"},
@@ -540,7 +639,7 @@ class WeiboSuperTopicCrawler:
 
         if post_id and _looks_truncated_text(full_text):
             try:
-                long_resp = self.session.get(
+                long_resp = http.get(
                     "https://weibo.com/ajax/statuses/longtext",
                     params={"id": post_id},
                     headers={"Referer": referer, "Origin": "https://weibo.com"},
@@ -562,7 +661,7 @@ class WeiboSuperTopicCrawler:
 
         if post_id and _looks_truncated_text(full_text):
             try:
-                mobile_resp = self.session.get(
+                mobile_resp = http.get(
                     "https://m.weibo.cn/statuses/extend",
                     params={"id": post_id},
                     headers={"Referer": referer},
@@ -580,7 +679,7 @@ class WeiboSuperTopicCrawler:
 
         if (not full_text or _looks_truncated_text(full_text)) and post_url:
             try:
-                page = self.session.get(post_url, headers={"Referer": "https://weibo.com/"}, timeout=20)
+                page = http.get(post_url, headers={"Referer": "https://weibo.com/"}, timeout=20)
                 if page.status_code == 200 and page.text:
                     try:
                         html = extract_feed_html_from_page(page.text)
@@ -836,6 +935,16 @@ def _apply_carryover_bucket(publish_dt: datetime | None, carryover_hours: int) -
     if hours <= 0:
         return publish_dt
     return publish_dt + timedelta(hours=hours)
+
+
+def _bounded_worker_count(requested: int | None, total: int) -> int:
+    if total <= 0:
+        return 1
+    try:
+        desired = int(requested or 1)
+    except (TypeError, ValueError):
+        desired = 1
+    return max(1, min(desired, total, 12))
 
 
 def _calc_time_weight(publish_dt: datetime | None, now: datetime, strength: float = 0.06) -> float:
@@ -1865,6 +1974,15 @@ def normalize_date(text: str) -> str | None:
     if m:
         return m.group(1)
     return None
+
+
+def _date_key_from_publish_time(text: str, parsed_dt: datetime | None = None) -> str:
+    if parsed_dt is not None:
+        return parsed_dt.strftime("%Y-%m-%d")
+    m = re.search(r"(\d{4}-\d{1,2}-\d{1,2})", str(text or "").strip())
+    if m:
+        return m.group(1)
+    return "未知日期"
 
 
 def _extract_user_name(item: Tag) -> str:
