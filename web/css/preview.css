@@ -1,1 +1,232 @@
-/* Markdown preview styles are still defined in base.css during this compatibility split. */
+/* Markdown preview, help dialog, modal overlays, and rendered Markdown. */
+
+.preview-actions {
+  margin-top: 0;
+  justify-content: flex-end;
+}
+
+.preview-panel .markdown-body {
+  max-width: 880px;
+  margin: 0 auto;
+  font-size: 15px;
+}
+
+.empty-state {
+  border: 1px dashed var(--line);
+  border-radius: 7px;
+  padding: 14px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.06);
+  font-size: 13px;
+}
+
+.empty-state.error,
+.image-error-placeholder {
+  border-color: rgba(255, 138, 128, 0.36);
+  color: var(--danger);
+  background: rgba(255, 138, 128, 0.1);
+}
+
+.image-error-placeholder {
+  border: 1px solid rgba(255, 138, 128, 0.36);
+  border-radius: 6px;
+  padding: 12px;
+  margin: 10px 0;
+  text-align: center;
+  font-size: 13px;
+}
+
+.modal-check-list {
+  padding: 16px 18px;
+}
+
+.help-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  background: rgba(0, 0, 0, 0.5);
+  -webkit-backdrop-filter: blur(0);
+  backdrop-filter: blur(0);
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+  transition:
+    opacity 260ms ease,
+    backdrop-filter 260ms ease,
+    -webkit-backdrop-filter 260ms ease,
+    visibility 0ms linear 260ms;
+}
+
+.help-overlay.visible {
+  opacity: 1;
+  pointer-events: auto;
+  visibility: visible;
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+  transition:
+    opacity 260ms ease,
+    backdrop-filter 260ms ease,
+    -webkit-backdrop-filter 260ms ease,
+    visibility 0ms linear 0ms;
+}
+
+.help-dialog {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  display: flex;
+  flex-direction: column;
+  width: min(900px, calc(100vw - 32px));
+  max-height: min(760px, calc(100vh - 48px));
+  overflow: hidden;
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  background: rgba(8, 10, 13, 0.78);
+  box-shadow: 0 28px 74px rgba(0, 0, 0, 0.48);
+  -webkit-backdrop-filter: blur(6px) saturate(1.18);
+  backdrop-filter: blur(6px) saturate(1.18);
+  transform: translate(-50%, -50%) scale(0.985);
+  transition:
+    transform 260ms ease,
+    opacity 220ms ease;
+}
+
+.help-overlay.visible .help-dialog {
+  transform: translate(-50%, -50%) scale(1);
+}
+
+.help-dialog.dragging {
+  transition: none;
+}
+
+.help-toolbar {
+  flex-shrink: 0;
+  cursor: move;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.help-dialog.dragging .help-toolbar {
+  cursor: grabbing;
+}
+
+.help-toolbar button {
+  cursor: pointer;
+}
+
+.help-content {
+  overflow: auto;
+  padding-top: 18px;
+}
+
+.markdown-body {
+  padding: 22px 28px 30px;
+  line-height: 1.72;
+}
+
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3 {
+  margin: 18px 0 10px;
+}
+
+.markdown-body h1 {
+  font-size: 24px;
+}
+
+.markdown-body h2 {
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+  font-size: 20px;
+}
+
+.markdown-body h3 {
+  font-size: 17px;
+}
+
+.markdown-body h4 {
+  margin: 16px 0 8px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.markdown-body p,
+.markdown-body ul,
+.markdown-body ol {
+  margin: 10px 0;
+}
+
+.markdown-body blockquote {
+  margin: 12px 0;
+  padding: 10px 14px;
+  border-left: 3px solid var(--link);
+  border-radius: 0 7px 7px 0;
+  background: rgba(255, 255, 255, 0.055);
+  color: var(--text);
+}
+
+.markdown-body table {
+  width: 100%;
+  margin: 12px 0 18px;
+  border-collapse: collapse;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  font-size: 13px;
+}
+
+.markdown-body th,
+.markdown-body td {
+  padding: 9px 11px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.markdown-body th {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  font-weight: 700;
+}
+
+.markdown-body tr:last-child td {
+  border-bottom: 0;
+}
+
+.markdown-body hr {
+  height: 1px;
+  margin: 28px 0;
+  border: 0;
+  background: linear-gradient(90deg, transparent, var(--line), transparent);
+}
+
+.markdown-body a {
+  color: var(--link);
+  text-decoration: none;
+}
+
+.markdown-body a:hover {
+  text-decoration: underline;
+}
+
+.markdown-body img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  margin: 10px 0;
+}
+
+@media (max-width: 980px) {
+.help-dialog {
+    width: calc(100vw - 24px);
+    max-height: calc(100vh - 32px);
+  }
+}
+
+@media (max-width: 620px) {
+.markdown-body {
+    padding: 18px;
+  }
+}

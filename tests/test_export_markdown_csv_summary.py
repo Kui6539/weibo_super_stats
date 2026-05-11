@@ -38,7 +38,12 @@ class ExportMarkdownCsvSummaryTests(unittest.TestCase):
             summary = build_summary(posts)
             write_summary_txt(summary, summary_path)
 
-            self.assertIn("# 测试超话周报", md_path.read_text(encoding="utf-8"))
+            md_text = md_path.read_text(encoding="utf-8")
+            self.assertIn("# 测试超话周报", md_text)
+            self.assertIn("## 1. 本周概览", md_text)
+            self.assertIn("### 2.1 评论数量榜 Top3", md_text)
+            self.assertIn("### No. 01", md_text)
+            self.assertIn("#### 正文", md_text)
             self.assertIn("帖子ID", csv_path.read_text(encoding="utf-8-sig"))
             self.assertIn("入选帖子数", summary_path.read_text(encoding="utf-8"))
             self.assertEqual(json.loads(json.dumps(summary, ensure_ascii=False))["total_posts"], 1)

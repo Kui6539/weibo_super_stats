@@ -1,1 +1,225 @@
-/* Candidate selection styles are still defined in base.css during this compatibility split. */
+/* Candidate selection cards and candidate controls. */
+
+.log-tools input,
+.log-tools select,
+.candidate-filterbar select {
+  min-height: 38px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0 11px;
+  color: var(--text);
+  background: rgba(0, 0, 0, 0.34);
+  outline: none;
+}
+
+.log-tools select,
+.candidate-filterbar select {
+  flex: 0 1 140px;
+}
+
+.candidate-panel,
+.result-panel {
+  border-top: 1px solid var(--soft-line);
+  margin-top: 18px;
+  padding-top: 2px;
+}
+
+.candidate-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.candidate-list {
+  display: grid;
+  gap: 10px;
+  max-height: 620px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.candidate {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 10px;
+  border: 1px solid var(--glass-border);
+  border-radius: 7px;
+  padding: 12px;
+  background: rgba(8, 10, 13, 0.58);
+  -webkit-backdrop-filter: blur(3.5px) saturate(1.12);
+  backdrop-filter: blur(3.5px) saturate(1.12);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.24);
+}
+
+.candidate input {
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+}
+
+.candidate-title {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: baseline;
+  margin-bottom: 7px;
+}
+
+.candidate-title strong {
+  font-size: 14px;
+}
+
+.score {
+  color: var(--link);
+  font-weight: 700;
+}
+
+.candidate-content {
+  color: #dde5ed;
+  line-height: 1.55;
+  word-break: break-word;
+}
+
+.candidate-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.candidate a,
+.result-value a,
+.markdown-body a {
+  color: var(--link);
+}
+
+.candidate-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: rgba(8, 10, 13, 0.72);
+  -webkit-backdrop-filter: blur(5px) saturate(1.16);
+  backdrop-filter: blur(5px) saturate(1.16);
+}
+
+.candidate-filterbar {
+  position: sticky;
+  top: 76px;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  border-bottom: 1px solid var(--glass-border);
+  padding: 12px 18px;
+  background: rgba(8, 10, 13, 0.7);
+  -webkit-backdrop-filter: blur(4px) saturate(1.12);
+  backdrop-filter: blur(4px) saturate(1.12);
+}
+
+.candidate {
+  grid-template-columns: minmax(70px, auto) minmax(0, 1fr);
+  transition:
+    border-color 180ms ease,
+    background 180ms ease;
+}
+
+.candidate.selected {
+  border-color: rgba(123, 216, 143, 0.4);
+}
+
+.candidate-check {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.candidate-body {
+  min-width: 0;
+}
+
+.candidate-content {
+  white-space: pre-wrap;
+}
+
+.candidate-content:not(.expanded) {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+}
+
+.candidate-card-actions,
+.result-actions,
+.preview-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.candidate-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0 10px;
+  color: var(--link);
+  text-decoration: none;
+  font-size: 13px;
+}
+
+.candidate-link.disabled {
+  color: var(--muted);
+  opacity: 0.65;
+}
+
+.candidate-previews {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.candidate-previews img {
+  width: 74px;
+  height: 74px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  object-fit: cover;
+}
+
+.candidate-list {
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+@media (max-width: 980px) {
+.preview-panel,
+  .candidate-panel {
+    position: static;
+    max-height: none;
+    transform: translateY(18px);
+    grid-column: 1;
+    grid-row: auto;
+  }
+}
+
+@media (max-width: 620px) {
+.candidate,
+  .backend-log-line {
+    grid-template-columns: 1fr;
+  }
+
+.candidate-check {
+    flex-direction: row;
+    align-items: center;
+  }
+}

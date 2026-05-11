@@ -1,1 +1,288 @@
-/* Theme variables and light/dark overrides are still defined in base.css during this compatibility split. */
+/* Light theme overrides. Keep this imported last. */
+
+body.light-theme {
+  color-scheme: light;
+  --bg: #eef2f6;
+  --panel: rgba(255, 255, 255, 0.72);
+  --glass-border: rgba(255, 255, 255, 0.68);
+  --text: #17202a;
+  --muted: #5e6c7a;
+  --line: rgba(30, 41, 59, 0.14);
+  --soft-line: rgba(30, 41, 59, 0.08);
+  --accent: rgba(255, 255, 255, 0.94);
+  --accent-strong: #ffffff;
+  --link: #1d4ed8;
+  --danger: #b42318;
+  --warn: #9a6700;
+  --success: #146c43;
+  --shadow: 0 22px 58px rgba(65, 80, 96, 0.18);
+}
+
+body.light-theme::before {
+  filter: blur(0.5px) brightness(0.86) saturate(1.02);
+}
+
+body.light-theme::after {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.42), rgba(255, 255, 255, 0.66)),
+    radial-gradient(circle at 50% 0, rgba(255, 255, 255, 0.38), transparent 44%);
+}
+
+body.light-theme .particle {
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: 0 0 12px rgba(255, 255, 255, 0.46);
+}
+
+body.light-theme button {
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--text);
+  box-shadow: 0 8px 22px rgba(65, 80, 96, 0.12);
+}
+
+body.light-theme .preflight-toggle {
+  border-color: rgba(30, 41, 59, 0.2);
+  background: rgba(255, 255, 255, 0.86);
+}
+
+body.light-theme .preflight-toggle:hover:not(:disabled) {
+  border-color: rgba(30, 41, 59, 0.3);
+  background: #ffffff;
+}
+
+body.light-theme .primary {
+  border-color: rgba(30, 41, 59, 0.16);
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--text);
+}
+
+body.light-theme .primary:hover:not(:disabled),
+body.light-theme .secondary:hover:not(:disabled) {
+  border-color: rgba(30, 41, 59, 0.24);
+  background: #ffffff;
+}
+
+body.light-theme .topbar {
+  border-bottom-color: rgba(255, 255, 255, 0.72);
+  background: rgba(255, 255, 255, 0.66);
+  box-shadow: 0 12px 34px rgba(65, 80, 96, 0.14);
+}
+
+body.light-theme .toast {
+  border-color: rgba(20, 108, 67, 0.26);
+  color: var(--success);
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: 0 14px 32px rgba(65, 80, 96, 0.16);
+}
+
+body.light-theme .toast.info {
+  border-color: rgba(30, 41, 59, 0.14);
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.88);
+}
+
+body.light-theme .toast.error {
+  border-color: rgba(180, 35, 24, 0.26);
+  color: var(--danger);
+  background: rgba(255, 248, 247, 0.92);
+}
+
+body.light-theme .status-pill {
+  background: rgba(255, 255, 255, 0.68);
+}
+
+body.light-theme .status-pill.running,
+body.light-theme .status-pill.exporting,
+body.light-theme .status-pill.awaiting_selection,
+body.light-theme .progress-item.active .progress-state {
+  border-color: rgba(30, 41, 59, 0.18);
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+body.light-theme .status-pill.completed,
+body.light-theme .progress-item.done .progress-state {
+  border-color: rgba(20, 108, 67, 0.28);
+  color: var(--success);
+  background: rgba(239, 250, 242, 0.74);
+}
+
+body.light-theme .status-pill.failed,
+body.light-theme .status-pill.cancelled,
+body.light-theme .progress-item.failed .progress-state,
+body.light-theme .progress-item.cancelled .progress-state {
+  border-color: rgba(180, 35, 24, 0.28);
+  color: var(--danger);
+  background: rgba(255, 243, 242, 0.78);
+}
+
+body.light-theme .field span {
+  color: #34424d;
+}
+
+body.light-theme .field input,
+body.light-theme .field textarea,
+body.light-theme .field select,
+body.light-theme .log-tools input,
+body.light-theme .log-tools select,
+body.light-theme .candidate-filterbar select {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.7);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
+}
+
+body.light-theme .field input::placeholder,
+body.light-theme .field textarea::placeholder {
+  color: rgba(91, 103, 116, 0.62);
+}
+
+body.light-theme .field select option {
+  color: var(--text);
+  background: #ffffff;
+}
+
+body.light-theme .field input:focus,
+body.light-theme .field textarea:focus,
+body.light-theme .field select:focus {
+  border-color: rgba(30, 41, 59, 0.34);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.48);
+}
+
+body.light-theme .progress-item,
+body.light-theme .candidate,
+body.light-theme .cookie-panel,
+body.light-theme .cookie-method-card,
+body.light-theme .preflight-inline,
+body.light-theme .check-item,
+body.light-theme .result-row {
+  background: rgba(255, 255, 255, 0.62);
+  box-shadow: 0 12px 28px rgba(65, 80, 96, 0.12);
+}
+
+body.light-theme .cookie-browser-switch {
+  border-color: rgba(30, 41, 59, 0.16);
+  background: rgba(255, 255, 255, 0.62);
+}
+
+body.light-theme .cookie-browser-switch::before {
+  background: rgba(30, 41, 59, 0.1);
+}
+
+body.light-theme .progress-item.active,
+body.light-theme .progress-item.waiting {
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: 0 14px 32px rgba(65, 80, 96, 0.14);
+}
+
+body.light-theme .progress-item.active {
+  border-color: rgba(18, 118, 168, 0.34);
+  box-shadow:
+    0 14px 32px rgba(65, 80, 96, 0.14),
+    0 0 0 1px rgba(18, 118, 168, 0.08);
+}
+
+body.light-theme .progress-item.waiting {
+  border-color: rgba(189, 119, 0, 0.34);
+  box-shadow:
+    0 14px 32px rgba(65, 80, 96, 0.14),
+    0 0 0 1px rgba(189, 119, 0, 0.08);
+}
+
+body.light-theme .progress-icon {
+  border-color: rgba(91, 103, 116, 0.44);
+  background: rgba(255, 255, 255, 0.82);
+}
+
+body.light-theme .progress-item.active .progress-icon {
+  border-color: #1276a8;
+  background: #e8f6fb;
+  box-shadow: 0 0 0 4px rgba(18, 118, 168, 0.14);
+}
+
+body.light-theme .progress-item.waiting .progress-icon {
+  border-color: #bd7700;
+  background: #fff7e5;
+  box-shadow: 0 0 0 4px rgba(189, 119, 0, 0.14);
+}
+
+body.light-theme .progress-state,
+body.light-theme .progress-track {
+  background: rgba(30, 41, 59, 0.08);
+}
+
+body.light-theme .progress-track {
+  box-shadow: inset 0 0 0 1px rgba(30, 41, 59, 0.08);
+}
+
+body.light-theme .progress-item.active .progress-fill {
+  background: linear-gradient(90deg, #1276a8, #19a7a2);
+  box-shadow: 0 0 14px rgba(18, 118, 168, 0.24);
+}
+
+body.light-theme .progress-item.waiting .progress-fill {
+  background: linear-gradient(90deg, #bd7700, #f0b53c);
+  box-shadow: 0 0 14px rgba(189, 119, 0, 0.2);
+}
+
+body.light-theme .progress-item.active .progress-fill::after,
+body.light-theme .progress-item.waiting .progress-fill::after {
+  background: linear-gradient(110deg, transparent 0 28%, rgba(255, 255, 255, 0.52) 45%, transparent 64% 100%);
+}
+
+body.light-theme .progress-item.active .progress-state {
+  border-color: rgba(18, 118, 168, 0.26);
+  color: #0b5f89;
+  background: rgba(232, 246, 251, 0.78);
+}
+
+body.light-theme .progress-item.waiting .progress-state {
+  border-color: rgba(189, 119, 0, 0.28);
+  color: #986200;
+  background: rgba(255, 247, 229, 0.8);
+}
+
+body.light-theme .candidate-content {
+  color: #2f3b45;
+}
+
+body.light-theme .result-row {
+  border-color: rgba(255, 255, 255, 0.58);
+  background: rgba(255, 255, 255, 0.52);
+}
+
+body.light-theme .backend-log {
+  background: rgba(255, 255, 255, 0.46);
+}
+
+body.light-theme .log-bubble {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.62);
+  box-shadow:
+    0 18px 42px rgba(65, 80, 96, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+
+body.light-theme .log-bubble:hover {
+  background: rgba(255, 255, 255, 0.78);
+}
+
+body.light-theme .floating-log-panel {
+  background: rgba(255, 255, 255, 0.66);
+  box-shadow:
+    0 26px 68px rgba(65, 80, 96, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.72);
+}
+
+body.light-theme .candidate-toolbar,
+body.light-theme .candidate-filterbar {
+  background: rgba(255, 255, 255, 0.7);
+}
+
+body.light-theme .help-overlay {
+  background: rgba(255, 255, 255, 0.42);
+}
+
+body.light-theme .help-dialog,
+body.light-theme .preflight-dialog {
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: 0 28px 74px rgba(65, 80, 96, 0.2);
+}

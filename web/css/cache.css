@@ -1,1 +1,89 @@
-/* Cache and reexport styles are still defined in base.css during this compatibility split. */
+/* Export result list, cache status, and re-export controls. */
+
+.result-panel {
+  padding: 18px;
+}
+
+.result-list {
+  display: grid;
+  gap: 8px;
+}
+
+.result-row {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 7px;
+  padding: 9px 10px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.result-label {
+  color: var(--muted);
+}
+
+.result-value {
+  word-break: break-all;
+}
+
+.result-path {
+  margin-top: 3px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.result-row.warning {
+  border-color: rgba(255, 209, 102, 0.28);
+  background: rgba(255, 209, 102, 0.08);
+}
+
+.cache-tools {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  border-top: 1px solid var(--glass-border);
+  padding-top: 14px;
+}
+
+.export-type-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  color: var(--muted);
+}
+
+.export-type-row label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.cache-status-box {
+  display: grid;
+  gap: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 7px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.cache-status-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.cache-status-line.ok {
+  color: var(--success);
+}
+
+.cache-status-line.missing {
+  color: var(--danger);
+}
+
+.file-row.missing {
+  opacity: 0.78;
+}

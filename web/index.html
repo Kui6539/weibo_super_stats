@@ -19,7 +19,7 @@
           <span class="theme-icon theme-moon" aria-hidden="true">☾</span>
         </button>
         <button id="helpBtn" type="button" class="secondary">使用说明</button>
-        <button id="previewBtn" type="button" class="secondary hidden" disabled>预览 Markdown</button>
+        <button id="previewBtn" type="button" class="secondary hidden" disabled>周报编辑预览</button>
         <div class="status-pill" id="statusPill">未开始</div>
       </div>
     </header>
@@ -252,10 +252,10 @@
         <div id="candidateList" class="candidate-list"></div>
       </section>
 
-      <section id="previewPanel" class="side-panel preview-panel" aria-label="Markdown 周报预览" aria-hidden="true">
+      <section id="previewPanel" class="side-panel preview-panel" aria-label="周报编辑预览" aria-hidden="true">
         <div class="side-toolbar">
           <div>
-            <h2>Markdown 周报预览</h2>
+            <h2>周报编辑预览</h2>
             <p id="previewPath" class="muted"></p>
           </div>
           <div class="preview-actions">
@@ -309,6 +309,7 @@
     <script src="/js/progress.js" defer></script>
     <script src="/js/logs.js" defer></script>
     <script src="/js/candidates.js" defer></script>
+    <script src="/vendor/markdown-it.min.js" defer></script>
     <script src="/js/preview.js" defer></script>
     <script src="/js/cache.js" defer></script>
     <script src="/js/help.js" defer></script>

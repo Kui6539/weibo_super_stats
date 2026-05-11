@@ -1,1 +1,533 @@
-/* Form and Cookie panel styles are still defined in base.css during this compatibility split. */
+/* Form controls, Cookie tools, advanced settings, and preflight UI. */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+}
+
+.field span {
+  font-size: 13px;
+  color: #d8e0e8;
+}
+
+.field input,
+.field textarea,
+.field select {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px 11px;
+  color: var(--text);
+  background: rgba(0, 0, 0, 0.34);
+  outline: none;
+  -webkit-backdrop-filter: blur(3px) saturate(1.08);
+  backdrop-filter: blur(3px) saturate(1.08);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.field input::placeholder,
+.field textarea::placeholder {
+  color: rgba(230, 236, 242, 0.52);
+}
+
+.field select option {
+  color: var(--text);
+  background: #0b0d10;
+}
+
+.field textarea {
+  resize: vertical;
+  min-height: 118px;
+  line-height: 1.5;
+}
+
+.field input:focus,
+.field textarea:focus,
+.field select:focus {
+  border-color: rgba(255, 255, 255, 0.42);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.12);
+}
+
+.wide {
+  margin-bottom: 14px;
+}
+
+.grid {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.grid.two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.grid.three {
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+}
+
+.button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 6px 0 16px;
+}
+
+.button-row.end {
+  justify-content: flex-end;
+  margin-bottom: 0;
+}
+
+.mode-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 7px 10px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 13px;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.mode-switch input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--text);
+}
+
+.cookie-panel,
+.preflight-inline,
+.log-panel,
+.advanced-fields {
+  min-width: 0;
+}
+
+.cookie-panel {
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  padding: 13px;
+  margin-bottom: 14px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.cookie-summary,
+.preflight-head,
+.result-file-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.preflight-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 10px;
+  min-width: 0;
+}
+
+.cookie-summary h3 {
+  margin: 0 0 4px;
+  font-size: 14px;
+}
+
+.cookie-state.valid,
+.check-item.ok .check-status,
+.result-row.exists .mini-badge {
+  border-color: rgba(123, 216, 143, 0.42);
+  color: var(--success);
+  background: rgba(123, 216, 143, 0.12);
+}
+
+.cookie-state.failed,
+.check-item.error .check-status,
+.result-row.missing .mini-badge,
+.result-row.warning .result-label {
+  border-color: rgba(255, 138, 128, 0.42);
+  color: var(--danger);
+  background: rgba(255, 138, 128, 0.12);
+}
+
+.cookie-state.stale,
+.check-item.warning .check-status {
+  border-color: rgba(255, 209, 102, 0.42);
+  color: var(--warn);
+  background: rgba(255, 209, 102, 0.12);
+}
+
+.cookie-editor {
+  margin-top: 12px;
+}
+
+.cookie-editor textarea {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+
+.cookie-quick-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.cookie-methods {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.cookie-method-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.055);
+}
+
+.cookie-method-card.recommended {
+  border-color: rgba(123, 216, 143, 0.28);
+  background: rgba(123, 216, 143, 0.075);
+}
+
+.cookie-method-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.cookie-browser-switch {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  min-height: 24px;
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  padding: 1px;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.18);
+  backdrop-filter: blur(8px);
+}
+
+.cookie-browser-switch::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: 2px;
+  width: calc(50% - 2px);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+    0 4px 12px rgba(0, 0, 0, 0.12);
+  transform: translateX(0);
+  transition:
+    transform 230ms cubic-bezier(0.2, 0.9, 0.18, 1.08),
+    background 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.cookie-browser-switch.is-chrome::before {
+  transform: translateX(calc(100% + 2px));
+}
+
+.cookie-action-label {
+  display: inline-flex;
+  align-items: center;
+  width: max-content;
+  min-height: 24px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 7px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.cookie-method-card h4 {
+  margin: 8px 0 4px;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.cookie-method-card p {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.cookie-action-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.cookie-action-buttons button,
+.cookie-quick-actions button {
+  min-height: 34px;
+}
+
+.advanced-fields {
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  transition:
+    max-height 260ms ease,
+    opacity 220ms ease;
+}
+
+.advanced-fields.expanded {
+  max-height: 280px;
+  opacity: 1;
+}
+
+.advanced-title {
+  padding-top: 6px;
+}
+
+.preflight-inline {
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 14px;
+  background: rgba(255, 255, 255, 0.06);
+  transition:
+    background 180ms ease,
+    border-color 180ms ease,
+    padding 220ms ease;
+}
+
+.preflight-inline.collapsed {
+  cursor: pointer;
+}
+
+.preflight-inline.collapsed:hover {
+  border-color: rgba(255, 255, 255, 0.28);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.preflight-inline.preflight-entering {
+  overflow: hidden;
+  transform-origin: top center;
+  animation: preflight-panel-enter 360ms cubic-bezier(0.18, 0.9, 0.22, 1);
+}
+
+.check-list {
+  display: grid;
+  gap: 8px;
+}
+
+.preflight-head + .check-list {
+  margin-top: 10px;
+}
+
+.preflight-inline > .check-list {
+  max-height: 1400px;
+  overflow: hidden;
+  opacity: 1;
+  transition:
+    max-height 240ms ease,
+    opacity 180ms ease,
+    margin-top 220ms ease;
+}
+
+.preflight-inline.collapsed > .check-list {
+  max-height: 0;
+  margin-top: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.preflight-toggle {
+  border-radius: 999px;
+  min-height: 26px;
+  padding: 0 10px;
+  font-size: 12px;
+  line-height: 1.2;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: none;
+  flex-shrink: 0;
+}
+
+.preflight-toggle:hover:not(:disabled) {
+  border-color: rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.check-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 7px;
+  padding: 9px 10px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.preflight-inline.preflight-entering .check-item {
+  animation: preflight-check-enter 320ms cubic-bezier(0.18, 0.9, 0.22, 1) both;
+}
+
+.preflight-inline.preflight-entering .check-item:nth-child(2) {
+  animation-delay: 26ms;
+}
+
+.preflight-inline.preflight-entering .check-item:nth-child(3) {
+  animation-delay: 52ms;
+}
+
+.preflight-inline.preflight-entering .check-item:nth-child(4) {
+  animation-delay: 78ms;
+}
+
+.preflight-inline.preflight-entering .check-item:nth-child(n + 5) {
+  animation-delay: 104ms;
+}
+
+.check-item strong {
+  display: block;
+  margin-bottom: 2px;
+  font-size: 13px;
+}
+
+.check-item p {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.check-status {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 8px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+@keyframes preflight-panel-enter {
+  from {
+    max-height: 0;
+    opacity: 0;
+    transform: translateY(-8px) scaleY(0.96);
+  }
+  72% {
+    opacity: 1;
+    transform: translateY(0) scaleY(1.01);
+  }
+  to {
+    max-height: 900px;
+    opacity: 1;
+    transform: translateY(0) scaleY(1);
+  }
+}
+
+@keyframes preflight-check-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.preflight-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 34;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(0, 0, 0, 0.5);
+  -webkit-backdrop-filter: blur(0);
+  backdrop-filter: blur(0);
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+  transition:
+    opacity 260ms ease,
+    backdrop-filter 260ms ease,
+    -webkit-backdrop-filter 260ms ease,
+    visibility 0ms linear 260ms;
+}
+
+.preflight-overlay.visible {
+  opacity: 1;
+  pointer-events: auto;
+  visibility: visible;
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+  transition:
+    opacity 260ms ease,
+    backdrop-filter 260ms ease,
+    -webkit-backdrop-filter 260ms ease,
+    visibility 0ms linear 0ms;
+}
+
+.preflight-dialog {
+  width: min(760px, 100%);
+  max-height: min(760px, calc(100vh - 36px));
+  overflow: auto;
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  background: rgba(8, 10, 13, 0.82);
+  box-shadow: 0 28px 74px rgba(0, 0, 0, 0.48);
+  -webkit-backdrop-filter: blur(6px) saturate(1.18);
+  backdrop-filter: blur(6px) saturate(1.18);
+}
+
+.preflight-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  border-top: 1px solid var(--glass-border);
+  padding: 14px 18px;
+}
+
+@media (max-width: 620px) {
+.grid.two,
+  .grid.three,
+  .result-row {
+    grid-template-columns: 1fr;
+  }
+
+.button-row.end {
+    justify-content: stretch;
+  }
+
+.cookie-methods {
+    grid-template-columns: 1fr;
+  }
+
+.preflight-actions {
+    flex-direction: column;
+  }
+}
