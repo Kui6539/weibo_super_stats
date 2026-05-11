@@ -229,12 +229,12 @@ web/
   styles.css           # CSS 入口，按功能导入 web/css/
   app.js               # 旧入口兼容，加载 web/js/main.js
   css/                 # base/layout/components/forms/progress 等样式分区
-  js/                  # api/state/utils/main 等前端脚本分区
+  js/                  # api/form/config/cookie/preflight/progress/logs/candidates/cache/preview/task 等脚本分区
 crawler.py             # 兼容入口，仍保留主要抓取、解析和导出实现
 tests/                 # 标准库 unittest 测试
 ```
 
-第五期拆分后，`cookie_helper.py` 仍作为兼容入口，对外保留原有函数名；具体的 Cookie 文本解析、调试 Edge、本地浏览器存储读取和轻量检测已迁移到 `modules/`。WebUI 保持无框架实现，`web/js/main.js` 暂时承载主流程，`api.js`、`utils.js`、`state.js` 先承接通用能力，其他文件作为后续细拆边界。
+第五期拆分后，`cookie_helper.py` 仍作为兼容入口，对外保留原有函数名；具体的 Cookie 文本解析、调试 Edge、本地浏览器存储读取和轻量检测已迁移到 `modules/`。WebUI 保持无框架实现，`web/js/main.js` 主要负责控制器装配和事件绑定；配置读写、表单、高级模式、Cookie 区域、预检查、结构化进度、日志、人工筛选、Markdown 预览、缓存重新生成、帮助弹窗、主题切换、粒子背景和任务轮询分别迁移到 `web/js/` 下的独立模块。
 
 `crawler.py` 暂时仍保留 HTML 解析、长正文补全、评论分析、图片下载、DOCX 复杂排版和 XLSX 嵌图逻辑。Markdown、CSV、summary 这类低风险导出已迁移到 `export/`，并由 `crawler.py` 保留兼容转发。未拆部分耦合较深，后续应按小步迁移，避免一次性重写导致抓取流程回归。
 
