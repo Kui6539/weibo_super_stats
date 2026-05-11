@@ -14,15 +14,35 @@ const fields = {
 const controls = {
   themeToggle: $("themeToggleBtn"),
   help: $("helpBtn"),
+  advancedMode: $("advancedModeToggle"),
   start: $("startBtn"),
+  cancelJob: $("cancelJobBtn"),
   edgeDebug: $("edgeDebugBtn"),
   autoCookie: $("autoCookieBtn"),
   clipboard: $("clipboardBtn"),
   extractCookie: $("extractCookieBtn"),
+  checkCookie: $("checkCookieBtn"),
+  clearCookie: $("clearCookieBtn"),
+  cookieExpand: $("cookieExpandBtn"),
+  cookieCollapse: $("cookieCollapseBtn"),
   select: $("selectBtn"),
   cancelSelect: $("cancelSelectBtn"),
+  candidateFilter: $("candidateFilter"),
+  candidateSort: $("candidateSort"),
   preview: $("previewBtn"),
+  refreshPreview: $("refreshPreviewBtn"),
+  copyMarkdown: $("copyMarkdownBtn"),
   openResultDir: $("openResultDirBtn"),
+  logSearch: $("logSearch"),
+  logLevelFilter: $("logLevelFilter"),
+  copyLog: $("copyLogBtn"),
+  downloadLog: $("downloadLogBtn"),
+  clearLogView: $("clearLogViewBtn"),
+  logBottom: $("logBottomBtn"),
+  preflightToggle: $("preflightToggleBtn"),
+  preflightClose: $("preflightCloseBtn"),
+  preflightCancel: $("preflightCancelBtn"),
+  preflightProceed: $("preflightProceedBtn"),
 };
 
 const ui = {
@@ -33,6 +53,9 @@ const ui = {
   jobMeta: $("jobMeta"),
   monitorPanel: $("monitorPanel"),
   logBox: $("logBox"),
+  logPanel: $("logPanel"),
+  backendLogBox: $("backendLogBox"),
+  logCount: $("logCount"),
   candidatePanel: $("candidatePanel"),
   candidateList: $("candidateList"),
   pickCount: $("pickCount"),
@@ -41,6 +64,16 @@ const ui = {
   previewPanel: $("previewPanel"),
   previewContent: $("previewContent"),
   previewPath: $("previewPath"),
+  cookieSummary: $("cookieSummary"),
+  cookieStateBadge: $("cookieStateBadge"),
+  cookieEditor: $("cookieEditor"),
+  advancedFields: $("advancedFields"),
+  preflightPanel: $("preflightPanel"),
+  preflightSummary: $("preflightSummary"),
+  preflightList: $("preflightList"),
+  preflightOverlay: $("preflightOverlay"),
+  preflightModalSummary: $("preflightModalSummary"),
+  preflightModalList: $("preflightModalList"),
   helpOverlay: $("helpOverlay"),
   helpDialog: $("helpDialog"),
   helpDragHandle: $("helpDragHandle"),
@@ -49,10 +82,13 @@ const ui = {
   helpClose: $("helpCloseBtn"),
 };
 
+const PREFLIGHT_STORAGE_KEY = "weibo_preflight_cache_v1";
+
 let pollTimer = null;
-let lastRenderedCandidateJob = null;
+let pollFailures = 0;
 let renderedPreviewKey = "";
 let autoPreviewResultKey = "";
+let currentMarkdown = "";
 let configReady = false;
 let configSaveTimer = null;
 let currentRenderedJob = null;
@@ -60,6 +96,16 @@ let toastStack = null;
 let helpDragState = null;
 let particleFrame = 0;
 let particlePointer = null;
+let cookieValidationState = "unverified";
+let lastLogJobId = "";
+let logClearCursor = 0;
+let visibleLogEntries = [];
+let candidateJobId = "";
+let candidateSelections = new Set();
+let candidateExpanded = new Set();
+let preflightPendingPayload = null;
+let preflightCollapseTimer = null;
+let lastPreflight = null;
 
 function setBusy(button, busy, text) {
   if (!button) return;
@@ -95,11 +141,20 @@ function api(path, options = {}) {
   };
   return fetch(path, init).then(async (response) => {
     const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(data.error || `请求失败：${response.status}`);
+    if (!response.ok || data.ok === false) {
+      throw new Error(formatApiError(data, response.status));
     }
     return data;
   });
+}
+
+function formatApiError(data, status) {
+  if (data && typeof data.error === "object" && data.error) {
+    const message = data.error.message || `请求失败：${status}`;
+    const suggestion = data.error.suggestion ? `建议：${data.error.suggestion}` : "";
+    return [message, suggestion].filter(Boolean).join("。");
+  }
+  return String(data?.error || `请求失败：${status}`);
 }
 
 function readForm() {
@@ -113,6 +168,7 @@ function readForm() {
     pause_seconds: fields.pauseSeconds.value,
     output_dir: fields.outputDir.value.trim(),
     theme: currentTheme(),
+    advanced_mode: controls.advancedMode.checked,
   };
 }
 
@@ -120,8 +176,12 @@ function configPayload() {
   return {
     super_topic: fields.superTopic.value.trim(),
     cookie: fields.cookie.value.trim(),
+    max_pages: fields.maxPages.value,
+    topic_comment_factor: fields.topicCommentFactor.value,
+    pause_seconds: fields.pauseSeconds.value,
     output_dir: fields.outputDir.value.trim(),
     theme: currentTheme(),
+    advanced_mode: controls.advancedMode.checked,
   };
 }
 
@@ -159,12 +219,23 @@ function statusText(status) {
   );
 }
 
+const STAGE_LABELS = {
+  init: "初始化任务",
+  crawl: "抓取帖子",
+  hydrate: "正文补全",
+  score: "评论分析与评分",
+  selection: "人工筛选",
+  images: "图片下载",
+  export: "导出文件",
+  completed: "完成",
+};
+
 function updateStatus(job) {
   const status = job?.status || "";
   ui.statusPill.className = `status-pill ${status}`;
   ui.statusPill.textContent = statusText(status);
   ui.jobMeta.textContent = job
-    ? `${job.started_at || ""} / ${job.updated_at || ""}`
+    ? `${job.stage_label || statusText(status)} / ${job.progress?.message || job.updated_at || ""}`
     : "等待启动";
 }
 
@@ -194,6 +265,24 @@ function renderProgress(job) {
 }
 
 function buildProgressSteps(job) {
+  if (Array.isArray(job?.subtasks) && job.subtasks.length) {
+    const currentStage = job.stage || "";
+    const progressMessage = job.progress?.message || job.stage_label || "";
+    return job.subtasks.map((item, index) => {
+      const state = normalizeSubtaskStatus(item.status);
+      const isCurrent =
+        item.id === currentStage || state === "active" || state === "failed" || state === "cancelled";
+      return progressStep(
+        item.id || `stage-${index}`,
+        item.label || STAGE_LABELS[item.id] || item.id || "任务阶段",
+        isCurrent ? progressMessage : subtaskDetailByState(state),
+        Number(item.percent || 0),
+        state,
+        isCurrent && job.progress?.total ? `${job.progress.current || 0}/${job.progress.total}` : `阶段 ${index + 1}/${job.subtasks.length}`,
+      );
+    });
+  }
+
   const logs = job?.logs || [];
   const messages = logs.map((item) => item.message || "");
   const status = job?.status || "";
@@ -388,10 +477,9 @@ function progressStep(id, title, detail, progress, state, meta = "") {
   };
 }
 
-function createProgressItem(step) {
+function createProgressItem() {
   const node = document.createElement("div");
   node.className = "progress-item";
-  node.dataset.stepId = step.id;
   node.innerHTML = `
     <div class="progress-icon" aria-hidden="true"></div>
     <div class="progress-main">
@@ -444,9 +532,29 @@ function stateLabel(state) {
   );
 }
 
+function normalizeSubtaskStatus(status) {
+  if (["pending", "active", "done", "failed", "cancelled", "waiting"].includes(status)) {
+    return status;
+  }
+  return "pending";
+}
+
+function subtaskDetailByState(state) {
+  return (
+    {
+      pending: "等待前置阶段完成",
+      active: "正在处理",
+      done: "阶段已完成",
+      failed: "阶段失败",
+      cancelled: "任务已取消",
+      waiting: "等待人工确认",
+    }[state] || ""
+  );
+}
+
 function currentSelectedCount(job) {
-  if (ui.candidateList.children.length) {
-    return selectedIndexes().length;
+  if (job?.status === "awaiting_selection") {
+    return candidateSelections.size;
   }
   return Number(job?.required_pick_count || 0);
 }
@@ -501,6 +609,161 @@ function clamp(value, min, max) {
   return Math.min(max, Math.max(min, Number.isFinite(value) ? value : min));
 }
 
+function renderBackendLogs(job) {
+  if (!ui.backendLogBox) return;
+  if ((job?.id || "") !== lastLogJobId) {
+    lastLogJobId = job?.id || "";
+    logClearCursor = 0;
+  }
+  const eventLogs = Array.isArray(job?.events)
+    ? job.events
+        .filter((item) => ["log", "warning", "error"].includes(item.type))
+        .map((item, index) => ({
+          index,
+          time: shortTime(item.created_at || ""),
+          stage: item.stage || "",
+          level: normalizeLogLevel(item.level || item.type),
+          message: sanitizeLogMessage(item.message || ""),
+        }))
+    : [];
+  const allLogs = eventLogs.length
+    ? eventLogs
+    : (job?.logs || []).map((item, index) => ({
+        index,
+        time: item.time || "",
+        stage: "",
+        level: logLevel(item.message || ""),
+        message: sanitizeLogMessage(item.message || ""),
+      }));
+  const rows = allLogs.slice(logClearCursor);
+  const levelFilter = controls.logLevelFilter.value || "all";
+  const search = controls.logSearch.value.trim().toLowerCase();
+  const nearBottom = isLogNearBottom();
+  visibleLogEntries = rows
+    .filter((item) => levelFilter === "all" || item.level === levelFilter)
+    .filter((item) => !search || `${item.time} ${item.stage} ${item.level} ${item.message}`.toLowerCase().includes(search));
+
+  ui.logCount.textContent = `${visibleLogEntries.length}/${rows.length} 条日志`;
+  if (!visibleLogEntries.length) {
+    ui.backendLogBox.innerHTML = `<div class="empty-state">暂无匹配日志</div>`;
+    return;
+  }
+  ui.backendLogBox.innerHTML = visibleLogEntries
+    .map(
+      (item) => `
+        <div class="backend-log-line ${item.level}">
+          <span class="backend-log-time">[${escapeHtml(item.time)}]</span>
+          <span class="backend-log-message">[${escapeHtml(stageName(item.stage))}] [${escapeHtml(logLevelLabel(item.level))}] ${escapeHtml(item.message)}</span>
+        </div>`,
+    )
+    .join("");
+  if (nearBottom) {
+    scrollLogToBottom();
+  }
+}
+
+function isLogNearBottom() {
+  const node = ui.backendLogBox;
+  if (!node) return true;
+  return node.scrollHeight - node.scrollTop - node.clientHeight < 42;
+}
+
+function scrollLogToBottom() {
+  if (!ui.backendLogBox) return;
+  ui.backendLogBox.scrollTop = ui.backendLogBox.scrollHeight;
+}
+
+function logLevel(message) {
+  if (/失败|错误|异常|访客验证|未成功|不可写|invalid|error|failed/i.test(message)) return "error";
+  if (/警告|可能|跳过|无命中|等待|建议|warning/i.test(message)) return "warning";
+  if (/成功|完成|已保存|已生成|可用|completed|saved/i.test(message)) return "success";
+  return "normal";
+}
+
+function normalizeLogLevel(level) {
+  if (level === "success") return "success";
+  if (level === "warning") return "warning";
+  if (level === "error") return "error";
+  if (level === "debug" || level === "info") return "normal";
+  return "normal";
+}
+
+function logLevelLabel(level) {
+  return (
+    {
+      normal: "普通",
+      success: "成功",
+      warning: "警告",
+      error: "错误",
+    }[level] || "普通"
+  );
+}
+
+function stageName(stage) {
+  if (!stage) return "任务";
+  return STAGE_LABELS[stage] || stage;
+}
+
+function shortTime(value) {
+  const text = String(value || "");
+  const match = /(\d{2}:\d{2}:\d{2})/.exec(text);
+  return match ? match[1] : text;
+}
+
+function sanitizeLogMessage(message) {
+  return String(message || "").replace(
+    /\b(ALF|SCF|SUB|SUBP|WBPSESS|XSRF-TOKEN|SSOLoginState|MLOGIN|_T_WM|M_WEIBOCN_PARAMS)=([^;\s]+)/g,
+    "$1=***",
+  );
+}
+
+async function copyVisibleLogs() {
+  const text = visibleLogEntries
+    .map((item) => `[${item.time}] [${stageName(item.stage)}] [${logLevelLabel(item.level)}] ${item.message}`)
+    .join("\n");
+  if (!text) {
+    showToast("当前没有可复制的日志。", "info");
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast("日志已复制。");
+  } catch (err) {
+    appendClientLog(`复制日志失败：${err.message}`);
+  }
+}
+
+function downloadVisibleLogs() {
+  const text = visibleLogEntries
+    .map((item) => `[${item.time}] [${stageName(item.stage)}] [${logLevelLabel(item.level)}] ${item.message}`)
+    .join("\n");
+  if (!text) {
+    showToast("当前没有可下载的日志。", "info");
+    return;
+  }
+  const stamp = formatDateForFilename(new Date());
+  const blob = new Blob([text + "\n"], { type: "text/plain;charset=utf-8" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = `weibo_super_stats_log_${stamp}.txt`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(link.href);
+}
+
+function clearLogView() {
+  const logs = currentRenderedJob?.logs || [];
+  logClearCursor = logs.length;
+  renderBackendLogs(currentRenderedJob);
+  showToast("前端日志显示已清空。", "info");
+}
+
+function formatDateForFilename(date) {
+  const pad = (value) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}_${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
+}
+
 function renderCandidates(job) {
   if (job?.status !== "awaiting_selection") {
     ui.layout.classList.remove("has-candidate");
@@ -510,58 +773,154 @@ function renderCandidates(job) {
 
   ui.layout.classList.add("has-candidate");
   ui.candidatePanel.setAttribute("aria-hidden", "false");
-  const required = Number(job.required_pick_count || 0);
+  const required = requiredPickCount(job);
   const candidates = job.candidates || [];
-  ui.pickCount.textContent = `需选择 ${required} 条，候选 ${candidates.length} 条`;
 
-  if (lastRenderedCandidateJob === job.id) {
-    updatePickCount();
-    return;
+  if (candidateJobId !== job.id) {
+    candidateJobId = job.id;
+    candidateSelections = new Set(candidates.slice(0, required).map((item) => Number(item.index)));
+    candidateExpanded = new Set();
   }
 
-  lastRenderedCandidateJob = job.id;
-  ui.candidateList.innerHTML = candidates
-    .map((item, idx) => {
-      const checked = idx < required ? "checked" : "";
-      const url = item.post_url
-        ? `<a href="${escapeAttr(item.post_url)}" target="_blank" rel="noreferrer">原帖</a>`
-        : "";
-      return `
-        <label class="candidate">
-          <input type="checkbox" value="${Number(item.index)}" ${checked} />
-          <div>
-            <div class="candidate-title">
-              <strong>#${escapeHtml(item.rank)} ${escapeHtml(item.user_name)}</strong>
-              <span class="muted">${escapeHtml(item.publish_time)}</span>
-              <span class="score">${escapeHtml(item.score)}</span>
-              ${url}
-            </div>
-            <div class="candidate-content">${escapeHtml(item.content)}</div>
-            <div class="candidate-metrics">
-              <span>赞 ${escapeHtml(item.likes)}</span>
-              <span>评 ${escapeHtml(item.comments)}</span>
-              <span>转 ${escapeHtml(item.reposts)}</span>
-            </div>
-          </div>
-        </label>`;
-    })
-    .join("");
-  ui.candidateList.querySelectorAll("input[type=checkbox]").forEach((checkbox) => {
-    checkbox.addEventListener("change", updatePickCount);
-  });
-  updatePickCount();
+  const visible = filterAndSortCandidates(candidates);
+  ui.candidateList.innerHTML = visible.length
+    ? visible.map((item) => candidateCardHtml(item)).join("")
+    : `<div class="empty-state">没有匹配的候选帖子</div>`;
+  updatePickCount(job);
 }
 
-function updatePickCount() {
-  const checked = selectedIndexes().length;
-  const requiredText = ui.pickCount.textContent.replace(/；已选.*$/, "");
-  ui.pickCount.textContent = `${requiredText}；已选 ${checked} 条`;
+function requiredPickCount(job) {
+  return Number(job?.required_pick_count || 15);
+}
+
+function filterAndSortCandidates(candidates) {
+  const filter = controls.candidateFilter.value || "all";
+  const sort = controls.candidateSort.value || "score";
+  const threshold = highCommentThreshold(candidates);
+  return [...candidates]
+    .filter((item) => {
+      const index = Number(item.index);
+      if (filter === "selected") return candidateSelections.has(index);
+      if (filter === "unselected") return !candidateSelections.has(index);
+      if (filter === "images") return Number(item.image_count || 0) > 0;
+      if (filter === "high_comments") return Number(item.comments || 0) >= threshold;
+      return true;
+    })
+    .sort((a, b) => compareCandidate(a, b, sort));
+}
+
+function highCommentThreshold(candidates) {
+  const maxComments = Math.max(0, ...candidates.map((item) => Number(item.comments || 0)));
+  return Math.max(10, Math.ceil(maxComments * 0.6));
+}
+
+function compareCandidate(a, b, sort) {
+  if (sort === "publish_time") {
+    const aTime = Date.parse(a.publish_time || "") || 0;
+    const bTime = Date.parse(b.publish_time || "") || 0;
+    return bTime - aTime;
+  }
+  return Number(b[sort] || 0) - Number(a[sort] || 0);
+}
+
+function candidateCardHtml(item) {
+  const index = Number(item.index);
+  const checked = candidateSelections.has(index);
+  const expanded = candidateExpanded.has(index);
+  const content = expanded ? item.content_full || item.content || "" : item.content_excerpt || item.content || "";
+  const imageCount = Number(item.image_count || 0);
+  const previewPaths = Array.isArray(item.image_preview_paths) ? item.image_preview_paths : [];
+  const previews = previewPaths
+    .map(candidatePreviewUrl)
+    .filter(Boolean)
+    .map((src) => `<img src="${escapeAttr(src)}" alt="候选图片预览" loading="lazy" />`)
+    .join("");
+  const postButton = item.post_url
+    ? `<a class="candidate-link" href="${escapeAttr(item.post_url)}" target="_blank" rel="noreferrer">原帖链接</a>`
+    : `<span class="candidate-link disabled">无原帖链接</span>`;
+
+  return `
+    <article class="candidate ${checked ? "selected" : ""}" data-index="${index}">
+      <div class="candidate-check">
+        <input type="checkbox" value="${index}" ${checked ? "checked" : ""} aria-label="选择第 ${escapeAttr(item.rank)} 条" />
+        <span class="mini-badge">${checked ? "已选" : "未选"}</span>
+      </div>
+      <div class="candidate-body">
+        <div class="candidate-title">
+          <strong>#${escapeHtml(item.rank)} ${escapeHtml(item.user_name || "未知作者")}</strong>
+          <span class="muted">${escapeHtml(item.publish_time || "")}</span>
+          <span class="score">综合分 ${escapeHtml(item.score)}</span>
+        </div>
+        <div class="candidate-metrics">
+          <span>赞 ${escapeHtml(item.likes)}</span>
+          <span>评 ${escapeHtml(item.comments)}</span>
+          <span>转 ${escapeHtml(item.reposts)}</span>
+          ${imageCount ? `<span>图片 ${imageCount} 张</span>` : ""}
+        </div>
+        <div class="candidate-content ${expanded ? "expanded" : ""}">${escapeHtml(content)}</div>
+        ${previews ? `<div class="candidate-previews">${previews}</div>` : ""}
+        <div class="candidate-card-actions">
+          ${postButton}
+          <button type="button" class="secondary small-button" data-toggle-full="${index}">
+            ${expanded ? "收起全文" : "展开全文"}
+          </button>
+        </div>
+      </div>
+    </article>`;
+}
+
+function candidatePreviewUrl(path) {
+  const text = String(path || "").trim();
+  if (!text) return "";
+  if (/^https?:\/\//i.test(text) || text.startsWith("/")) return text;
+  return "";
+}
+
+function updatePickCount(job = currentRenderedJob) {
+  if (!job || job.status !== "awaiting_selection") return;
+  const checked = candidateSelections.size;
+  const required = requiredPickCount(job);
+  const diff = required - checked;
+  let hint = "数量正确，可以确认";
+  let valid = true;
+  if (diff > 0) {
+    hint = `还需选择 ${diff} 条`;
+    valid = false;
+  } else if (diff < 0) {
+    hint = `已多选 ${Math.abs(diff)} 条`;
+    valid = false;
+  }
+  ui.pickCount.textContent = `已选 ${checked} / ${required}；${hint}`;
+  controls.select.disabled = !valid || Boolean(controls.select.dataset.busyText);
 }
 
 function selectedIndexes() {
-  return Array.from(ui.candidateList.querySelectorAll("input[type=checkbox]:checked")).map((input) =>
-    Number(input.value),
-  );
+  return [...candidateSelections].sort((a, b) => a - b);
+}
+
+function handleCandidateClick(event) {
+  const toggle = event.target.closest("[data-toggle-full]");
+  if (toggle) {
+    const index = Number(toggle.dataset.toggleFull);
+    if (candidateExpanded.has(index)) {
+      candidateExpanded.delete(index);
+    } else {
+      candidateExpanded.add(index);
+    }
+    renderCandidates(currentRenderedJob);
+  }
+}
+
+function handleCandidateChange(event) {
+  const checkbox = event.target.closest("input[type=checkbox]");
+  if (!checkbox) return;
+  const index = Number(checkbox.value);
+  if (checkbox.checked) {
+    candidateSelections.add(index);
+  } else {
+    candidateSelections.delete(index);
+  }
+  renderCandidates(currentRenderedJob);
 }
 
 function renderResult(job) {
@@ -583,28 +942,7 @@ function renderResult(job) {
   controls.preview.disabled = false;
   controls.openResultDir.classList.remove("hidden");
   controls.openResultDir.disabled = false;
-  const rows = [
-    ["总帖数", result.total_posts],
-    ["导出目录", result.run_dir],
-    ["图片目录", result.image_dir],
-    ["XLSX", result.xlsx],
-    ["CSV", result.csv],
-    ["DOCX", Array.isArray(result.docx) ? result.docx.join("\n") : result.docx],
-    ["总 DOCX", result.docx_sum],
-    ["Markdown", result.md],
-    ["摘要", result.summary],
-  ].filter(([, value]) => value !== undefined && value !== null && value !== "");
-
-  ui.resultList.innerHTML = rows
-    .map(([label, value]) => {
-      const text = String(value);
-      const html = text
-        .split("\n")
-        .map((line) => `<div>${escapeHtml(line)}</div>`)
-        .join("");
-      return `<div class="result-row"><div class="result-label">${escapeHtml(label)}</div><div class="result-value">${html}</div></div>`;
-    })
-    .join("");
+  renderResultList(result);
 
   if (result.md && result.md !== autoPreviewResultKey) {
     autoPreviewResultKey = result.md;
@@ -612,17 +950,112 @@ function renderResult(job) {
   }
 }
 
+function renderResultList(result) {
+  const manifest = result.manifest || {};
+  const files = manifest.files || {};
+  const warnings = result.warnings || manifest.warnings || [];
+  const failedImageCount = Number(result.failed_image_count || manifest.failed_image_count || 0);
+  const rows = [
+    resultInfoRow("导出目录", result.run_dir || manifest.run_dir, true),
+    resultFileRow("Markdown 文件", files.markdown || pathToFileItem("Markdown", result.md, "preview_markdown")),
+    ...arrayFileRows("DOCX 文件", files.docx || result.docx),
+    resultFileRow("总 DOCX", files.docx_sum || pathToFileItem("总 DOCX", result.docx_sum)),
+    resultFileRow("XLSX 文件", files.xlsx || pathToFileItem("XLSX", result.xlsx)),
+    resultFileRow("CSV 文件", files.csv || pathToFileItem("CSV", result.csv)),
+    resultFileRow("summary txt 文件", files.summary || pathToFileItem("summary txt", result.summary)),
+    resultFileRow("images 图片目录", files.images || pathToFileItem("images 图片目录", result.image_dir, "open_result_dir")),
+    failedImageCount ? resultInfoRow("失败图片数量", `${failedImageCount} 张`, false) : "",
+    ...warnings.map((warning) => resultInfoRow("警告", warning, false, "warning")),
+  ].filter(Boolean);
+  ui.resultList.innerHTML = rows.join("");
+}
+
+function arrayFileRows(label, value) {
+  if (!value) return [];
+  const rows = Array.isArray(value) ? value : [value];
+  return rows.map((item, index) => {
+    const rowLabel = rows.length > 1 ? `${label} ${index + 1}` : label;
+    return resultFileRow(rowLabel, typeof item === "string" ? pathToFileItem(rowLabel, item) : item);
+  });
+}
+
+function pathToFileItem(label, path, action = "") {
+  if (!path) return null;
+  const name = String(path).split(/[\\/]/).filter(Boolean).pop() || String(path);
+  return { label, name, path: String(path), relative_path: String(path), exists: true, action };
+}
+
+function resultFileRow(label, item) {
+  if (!item) return "";
+  const path = item.path || "";
+  const exists = item.exists !== false;
+  const action = item.action || "";
+  const previewButton =
+    action === "preview_markdown"
+      ? `<button type="button" class="secondary small-button" data-preview-md="1">预览 Markdown</button>`
+      : "";
+  const openButton =
+    action === "open_result_dir"
+      ? `<button type="button" class="secondary small-button" data-open-result="1">打开导出目录</button>`
+      : "";
+  return `
+    <div class="result-row file-row ${exists ? "exists" : "missing"}">
+      <div class="result-label">${escapeHtml(label)}</div>
+      <div class="result-value">
+        <div class="result-file-head">
+          <strong>${escapeHtml(item.name || "未生成")}</strong>
+          <span class="mini-badge">${exists ? "存在" : "不存在"}</span>
+        </div>
+        <div class="result-path">${escapeHtml(item.relative_path || path || "")}</div>
+        <div class="result-actions">
+          ${previewButton}
+          ${openButton}
+          ${path ? `<button type="button" class="secondary small-button" data-copy-path="${escapeAttr(path)}">复制路径</button>` : ""}
+        </div>
+      </div>
+    </div>`;
+}
+
+function resultInfoRow(label, value, copyable = false, state = "") {
+  return `
+    <div class="result-row ${state}">
+      <div class="result-label">${escapeHtml(label)}</div>
+      <div class="result-value">
+        <div class="result-path">${escapeHtml(value || "")}</div>
+        ${copyable && value ? `<div class="result-actions"><button type="button" class="secondary small-button" data-copy-path="${escapeAttr(value)}">复制路径</button></div>` : ""}
+      </div>
+    </div>`;
+}
+
+function handleResultClick(event) {
+  const copyButton = event.target.closest("[data-copy-path]");
+  if (copyButton) {
+    copyText(copyButton.dataset.copyPath || "", "路径已复制。");
+    return;
+  }
+  if (event.target.closest("[data-preview-md]")) {
+    loadMarkdownPreview();
+    return;
+  }
+  if (event.target.closest("[data-open-result]")) {
+    openResultDir();
+  }
+}
+
 function renderJob(job) {
   currentRenderedJob = job;
   updateStatus(job);
   renderProgress(job);
+  renderBackendLogs(job);
   renderCandidates(job);
   renderResult(job);
 
   const active = ["running", "awaiting_selection", "exporting"].includes(job?.status);
   controls.start.disabled = active;
+  controls.cancelJob.classList.toggle("hidden", !active);
+  controls.cancelJob.disabled = !active || Boolean(controls.cancelJob.dataset.busyText);
   if (!active && pollTimer) {
-    clearInterval(pollTimer);
+    clearTimeout(pollTimer);
     pollTimer = null;
   }
 }
@@ -630,28 +1063,50 @@ function renderJob(job) {
 async function refreshStatus() {
   try {
     const data = await api("/api/status");
-    renderJob(data.job);
-    if (["running", "awaiting_selection", "exporting"].includes(data.job?.status) && !pollTimer) {
-      startPolling();
-    }
+    pollFailures = 0;
+    const job = data.data?.job ?? data.job;
+    renderJob(job);
+    scheduleNextPoll(job);
   } catch (err) {
+    pollFailures += 1;
     appendClientLog(`状态刷新失败：${err.message}`);
+    scheduleNextPoll(currentRenderedJob);
   }
 }
 
 function startPolling() {
-  if (pollTimer) clearInterval(pollTimer);
-  pollTimer = setInterval(refreshStatus, 1200);
+  scheduleNextPoll(currentRenderedJob, 0);
+}
+
+function scheduleNextPoll(job, overrideDelay = null) {
+  if (pollTimer) {
+    clearTimeout(pollTimer);
+    pollTimer = null;
+  }
+  if (!["running", "awaiting_selection", "exporting"].includes(job?.status)) {
+    return;
+  }
+  const delay = overrideDelay ?? nextPollDelay(job);
+  pollTimer = window.setTimeout(refreshStatus, delay);
+}
+
+function nextPollDelay(job) {
+  if (pollFailures === 1) return 2000;
+  if (pollFailures === 2) return 5000;
+  if (pollFailures >= 3) return 10000;
+  if (document.hidden) return 5000;
+  if (job?.status === "awaiting_selection") return 2500;
+  return 1000;
 }
 
 function appendClientLog(message) {
-  const text = String(message || "").trim();
+  const text = sanitizeLogMessage(String(message || "").trim());
   if (!text) return;
   showToast(text, /失败|错误|拒绝|异常|failed|error/i.test(text) ? "error" : "info");
 }
 
 function showToast(message, state = "success") {
-  const text = String(message || "").trim();
+  const text = sanitizeLogMessage(String(message || "").trim());
   if (!text) return;
   if (!toastStack) {
     toastStack = document.createElement("div");
@@ -669,7 +1124,7 @@ function showToast(message, state = "success") {
   window.setTimeout(() => {
     toast.classList.add("leaving");
     window.setTimeout(() => toast.remove(), 260);
-  }, 2600);
+  }, 3000);
 }
 
 async function initDefaults() {
@@ -683,31 +1138,183 @@ async function initDefaults() {
   fields.topicCommentFactor.value = defaults.topic_comment_factor || 1;
   fields.pauseSeconds.value = defaults.pause_seconds || 1;
   fields.outputDir.value = defaults.output_dir || "";
+  setAdvancedMode(defaults.advanced_mode === true || defaults.advanced_mode === "true");
   applyTheme(defaults.theme === "light" ? "light" : "dark");
+  updateCookieSummary();
   configReady = true;
   setSaveState("配置自动保存", "ready");
 }
 
 async function startJob() {
-  setBusy(controls.start, true, "正在启动");
+  setBusy(controls.start, true, "正在检查");
   try {
     await saveConfigNow();
+    const payload = readForm();
+    const response = await api("/api/preflight", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    const preflight = response.data || response;
+    renderPreflightInline(preflight);
+    const hasError = preflight.checks?.some((item) => item.status === "error");
+    const hasWarning = preflight.checks?.some((item) => item.status === "warning");
+    if (hasError || hasWarning) {
+      showPreflightModal(preflight, !hasError, payload);
+      return;
+    }
+    showToast("预检查通过，开始任务。");
+    setBusy(controls.start, false);
+    await startJobAfterPreflight(payload);
+  } catch (err) {
+    appendClientLog(err.message);
+  } finally {
+    if (!["running", "awaiting_selection", "exporting"].includes(currentRenderedJob?.status)) {
+      setBusy(controls.start, false);
+    } else {
+      controls.start.disabled = true;
+    }
+  }
+}
+
+async function startJobAfterPreflight(payload = readForm()) {
+  setBusy(controls.start, true, "正在启动");
+  try {
     const data = await api("/api/start", {
       method: "POST",
-      body: JSON.stringify(readForm()),
+      body: JSON.stringify(payload),
     });
-    lastRenderedCandidateJob = null;
+    const job = data.data?.job ?? data.job;
+    candidateJobId = "";
     renderedPreviewKey = "";
     autoPreviewResultKey = "";
+    currentMarkdown = "";
     hidePreview();
-    renderJob(data.job);
+    renderJob(job);
     startPolling();
   } catch (err) {
     appendClientLog(err.message);
   } finally {
     setBusy(controls.start, false);
+    if (["running", "awaiting_selection", "exporting"].includes(currentRenderedJob?.status)) {
+      controls.start.disabled = true;
+    }
     refreshStatus();
   }
+}
+
+function renderPreflightInline(preflight, options = {}) {
+  const checks = preflight.checks || [];
+  const { restore = false, collapsed = false } = options;
+  clearTimeout(preflightCollapseTimer);
+  if (!checks.length) {
+    ui.preflightPanel.classList.add("hidden");
+    lastPreflight = null;
+    clearPreflightCache();
+    return;
+  }
+  ui.preflightPanel.classList.remove("hidden");
+  lastPreflight = preflight;
+  ui.preflightSummary.textContent = preflightSummaryText(checks);
+  renderCheckList(ui.preflightList, checks);
+  setPreflightCollapsed(collapsed);
+  if (!restore) {
+    preflightCollapseTimer = window.setTimeout(() => {
+      setPreflightCollapsed(true);
+    }, 2000);
+  }
+}
+
+function setPreflightCollapsed(collapsed) {
+  const isCollapsed = Boolean(collapsed);
+  ui.preflightPanel.classList.toggle("collapsed", isCollapsed);
+  ui.preflightPanel.setAttribute("aria-expanded", isCollapsed ? "false" : "true");
+  if (controls.preflightToggle) {
+    controls.preflightToggle.textContent = isCollapsed ? "展开" : "收起";
+    controls.preflightToggle.setAttribute("aria-expanded", isCollapsed ? "false" : "true");
+  }
+  persistPreflightCache(isCollapsed);
+}
+
+function persistPreflightCache(collapsed) {
+  if (!lastPreflight) return;
+  const payload = {
+    preflight: lastPreflight,
+    collapsed: Boolean(collapsed),
+    saved_at: Date.now(),
+  };
+  try {
+    localStorage.setItem(PREFLIGHT_STORAGE_KEY, JSON.stringify(payload));
+  } catch (err) {
+    // Ignore storage failures (e.g., private mode).
+  }
+}
+
+function clearPreflightCache() {
+  try {
+    localStorage.removeItem(PREFLIGHT_STORAGE_KEY);
+  } catch (err) {
+    // Ignore storage failures.
+  }
+}
+
+function restorePreflightCache() {
+  let cached = null;
+  try {
+    cached = JSON.parse(localStorage.getItem(PREFLIGHT_STORAGE_KEY) || "null");
+  } catch (err) {
+    return;
+  }
+  if (!cached?.preflight?.checks?.length) return;
+  renderPreflightInline(cached.preflight, {
+    restore: true,
+    collapsed: Boolean(cached.collapsed),
+  });
+}
+
+function showPreflightModal(preflight, canProceed, payload) {
+  preflightPendingPayload = payload;
+  const checks = preflight.checks || [];
+  ui.preflightModalSummary.textContent = canProceed
+    ? "存在警告项，可以继续，但建议先确认。"
+    : "存在错误项，暂不能开始任务。";
+  renderCheckList(ui.preflightModalList, checks);
+  controls.preflightProceed.disabled = !canProceed;
+  controls.preflightProceed.textContent = canProceed ? "仍然开始" : "无法开始";
+  ui.preflightOverlay.classList.add("visible");
+  ui.preflightOverlay.setAttribute("aria-hidden", "false");
+}
+
+function closePreflightModal() {
+  ui.preflightOverlay.classList.remove("visible");
+  ui.preflightOverlay.setAttribute("aria-hidden", "true");
+  preflightPendingPayload = null;
+}
+
+function renderCheckList(target, checks) {
+  target.innerHTML = checks
+    .map(
+      (item) => `
+        <div class="check-item ${escapeAttr(item.status)}">
+          <span class="check-status">${checkStatusLabel(item.status)}</span>
+          <div>
+            <strong>${escapeHtml(item.label)}</strong>
+            <p>${escapeHtml(item.message)}</p>
+          </div>
+        </div>`,
+    )
+    .join("");
+}
+
+function preflightSummaryText(checks) {
+  const errors = checks.filter((item) => item.status === "error").length;
+  const warnings = checks.filter((item) => item.status === "warning").length;
+  if (errors) return `${errors} 个错误，${warnings} 个警告`;
+  if (warnings) return `${warnings} 个警告，可继续`;
+  return "全部通过";
+}
+
+function checkStatusLabel(status) {
+  return { ok: "通过", warning: "警告", error: "错误" }[status] || "检查";
 }
 
 async function launchEdgeDebug() {
@@ -727,6 +1334,8 @@ async function autoCookie() {
   try {
     const data = await api("/api/cookie/auto", { method: "POST", body: "{}" });
     fields.cookie.value = data.cookie || "";
+    setCookieValidationState("unverified");
+    updateCookieSummary();
     await saveConfigNow();
     showToast(data.debug_edge_closed ? "Cookie 自动读取成功，调试 Edge 已关闭。" : "Cookie 自动读取成功。");
   } catch (err) {
@@ -740,8 +1349,10 @@ async function readClipboard() {
   try {
     const text = await navigator.clipboard.readText();
     fields.cookie.value = text || "";
+    setCookieValidationState("unverified");
+    updateCookieSummary();
     scheduleConfigSave();
-    appendClientLog("剪贴板内容已填入 Cookie 文本框。");
+    showToast("剪贴板内容已填入 Cookie 文本框。", "info");
   } catch (err) {
     appendClientLog(`读取剪贴板失败：${err.message}`);
   }
@@ -755,8 +1366,10 @@ async function extractCookie() {
       body: JSON.stringify({ text: fields.cookie.value }),
     });
     fields.cookie.value = data.cookie || "";
+    setCookieValidationState("unverified");
+    updateCookieSummary();
     await saveConfigNow();
-    appendClientLog("已从粘贴内容中识别 Cookie。");
+    showToast("已从粘贴内容中识别 Cookie。", "info");
   } catch (err) {
     appendClientLog(err.message);
   } finally {
@@ -764,19 +1377,104 @@ async function extractCookie() {
   }
 }
 
+async function checkCookie() {
+  setBusy(controls.checkCookie, true, "正在测试");
+  try {
+    const data = await api("/api/check-cookie", {
+      method: "POST",
+      body: JSON.stringify({
+        cookie: fields.cookie.value.trim(),
+        super_topic: fields.superTopic.value.trim(),
+      }),
+    });
+    const result = data.data || data;
+    setCookieValidationState(cookieStateFromLoginState(result.login_state));
+    updateCookieSummary();
+    const toastState = result.login_state === "valid" ? "success" : result.login_state === "unknown" ? "info" : "error";
+    showToast(`${result.message || "Cookie 检测完成"}。${result.suggestion ? `建议：${result.suggestion}` : ""}`, toastState);
+  } catch (err) {
+    setCookieValidationState("failed");
+    updateCookieSummary();
+    appendClientLog(err.message);
+  } finally {
+    setBusy(controls.checkCookie, false);
+  }
+}
+
+async function clearCookie() {
+  setBusy(controls.clearCookie, true, "正在清空");
+  try {
+    fields.cookie.value = "";
+    setCookieValidationState("unverified");
+    updateCookieSummary();
+    await api("/api/clear-config", {
+      method: "POST",
+      body: JSON.stringify({ scope: "cookie" }),
+    });
+    showToast("Cookie 已清空。", "info");
+  } catch (err) {
+    appendClientLog(err.message);
+  } finally {
+    setBusy(controls.clearCookie, false);
+  }
+}
+
+function expandCookieEditor() {
+  ui.cookieEditor.classList.remove("hidden");
+  controls.cookieExpand.classList.add("hidden");
+  controls.cookieCollapse.classList.remove("hidden");
+  fields.cookie.focus();
+}
+
+function collapseCookieEditor() {
+  ui.cookieEditor.classList.add("hidden");
+  controls.cookieExpand.classList.remove("hidden");
+  controls.cookieCollapse.classList.add("hidden");
+}
+
+function setCookieValidationState(state) {
+  cookieValidationState = state || "unverified";
+}
+
+function updateCookieSummary() {
+  const length = fields.cookie.value.trim().length;
+  ui.cookieSummary.textContent = length ? `已填写 Cookie，长度 ${length} 字符` : "未填写 Cookie";
+  ui.cookieStateBadge.textContent = cookieStatusLabel(cookieValidationState);
+  ui.cookieStateBadge.className = `mini-badge cookie-state ${cookieValidationState}`;
+}
+
+function cookieStatusLabel(state) {
+  return (
+    {
+      unverified: "未验证",
+      valid: "验证成功",
+      failed: "验证失败",
+      stale: "可能失效",
+    }[state] || "未验证"
+  );
+}
+
+function cookieStateFromLoginState(state) {
+  if (state === "valid") return "valid";
+  if (state === "unknown") return "stale";
+  return "failed";
+}
+
 async function submitSelection() {
+  if (controls.select.disabled) return;
   setBusy(controls.select, true, "正在提交");
   try {
     const data = await api("/api/select", {
       method: "POST",
       body: JSON.stringify({ indexes: selectedIndexes() }),
     });
-    renderJob(data.job);
+    renderJob(data.data?.job ?? data.job);
     startPolling();
   } catch (err) {
     appendClientLog(err.message);
   } finally {
     setBusy(controls.select, false);
+    updatePickCount();
   }
 }
 
@@ -787,11 +1485,34 @@ async function cancelSelection() {
       method: "POST",
       body: "{}",
     });
-    renderJob(data.job);
+    renderJob(data.data?.job ?? data.job);
   } catch (err) {
     appendClientLog(err.message);
   } finally {
     setBusy(controls.cancelSelect, false);
+  }
+}
+
+async function cancelJob() {
+  const confirmed = window.confirm("确定要取消当前任务吗？已抓取的数据和已生成的临时文件可能会保留。");
+  if (!confirmed) return;
+  setBusy(controls.cancelJob, true, "正在取消");
+  showToast("正在取消，请等待当前请求结束……", "warning");
+  try {
+    const data = await api("/api/cancel-job", { method: "POST", body: "{}" });
+    const job = data.data?.job ?? data.job;
+    renderJob(job);
+    startPolling();
+    if (job?.status === "cancelled") {
+      showToast("任务已取消。", "info");
+    }
+  } catch (err) {
+    appendClientLog(err.message);
+  } finally {
+    setBusy(controls.cancelJob, false);
+    if (["running", "awaiting_selection", "exporting"].includes(currentRenderedJob?.status)) {
+      controls.cancelJob.disabled = false;
+    }
   }
 }
 
@@ -809,14 +1530,22 @@ async function openResultDir() {
 
 async function loadMarkdownPreview(options = {}) {
   const isAuto = Boolean(options.auto);
+  const force = Boolean(options.force);
   if (!isAuto) {
     setBusy(controls.preview, true, "正在载入");
   }
+  setPreviewLoading("正在加载 Markdown 预览...");
   try {
     const data = await api("/api/report-preview");
-    const key = `${data.path || ""}:${data.markdown?.length || 0}`;
-    if (key !== renderedPreviewKey) {
-      ui.previewContent.innerHTML = renderMarkdown(data.markdown || "");
+    const markdown = data.markdown || "";
+    const key = `${data.path || ""}:${markdown.length}:${force ? Date.now() : ""}`;
+    currentMarkdown = markdown;
+    if (!markdown.trim()) {
+      ui.previewContent.innerHTML = `<div class="empty-state">暂无可预览内容</div>`;
+      renderedPreviewKey = key;
+    } else if (key !== renderedPreviewKey || force) {
+      ui.previewContent.innerHTML = renderMarkdown(markdown);
+      bindMarkdownImages(ui.previewContent);
       renderedPreviewKey = key;
     }
     ui.previewPath.textContent = data.path || "";
@@ -825,12 +1554,35 @@ async function loadMarkdownPreview(options = {}) {
       ui.previewPanel.scrollIntoView({ behavior: "smooth", block: "start" });
     }
   } catch (err) {
+    currentMarkdown = "";
+    ui.previewContent.innerHTML = `<div class="empty-state error">预览失败：${escapeHtml(err.message)}。建议确认 Markdown 文件是否已经生成。</div>`;
+    showPreview();
     appendClientLog(err.message);
   } finally {
     if (!isAuto) {
       setBusy(controls.preview, false);
     }
   }
+}
+
+function setPreviewLoading(message) {
+  ui.previewContent.innerHTML = `<div class="empty-state loading">${escapeHtml(message)}</div>`;
+}
+
+function bindMarkdownImages(container) {
+  container.querySelectorAll("img").forEach((image) => {
+    image.addEventListener(
+      "error",
+      () => {
+        image.classList.add("image-error");
+        const placeholder = document.createElement("div");
+        placeholder.className = "image-error-placeholder";
+        placeholder.textContent = "图片加载失败";
+        image.replaceWith(placeholder);
+      },
+      { once: true },
+    );
+  });
 }
 
 function showPreview() {
@@ -845,10 +1597,38 @@ function hidePreview() {
   controls.preview.textContent = "预览 Markdown";
 }
 
+async function copyMarkdown() {
+  if (!currentMarkdown) {
+    try {
+      const data = await api("/api/report-preview");
+      currentMarkdown = data.markdown || "";
+    } catch (err) {
+      appendClientLog(err.message);
+      return;
+    }
+  }
+  if (!currentMarkdown.trim()) {
+    showToast("暂无可复制的 Markdown。", "info");
+    return;
+  }
+  copyText(currentMarkdown, "Markdown 已复制。");
+}
+
+async function copyText(text, successMessage) {
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast(successMessage || "已复制。");
+  } catch (err) {
+    appendClientLog(`复制失败：${err.message}`);
+  }
+}
+
 async function loadHelpDoc() {
   try {
     const data = await api("/api/help-doc");
     ui.helpContent.innerHTML = renderMarkdown(data.markdown || "");
+    bindMarkdownImages(ui.helpContent);
     ui.helpPath.textContent = data.path || "";
     showHelpDialog();
   } catch (err) {
@@ -907,7 +1687,7 @@ function stopHelpDrag() {
 }
 
 function renderMarkdown(markdown) {
-  const lines = markdown.replace(/\r\n/g, "\n").split("\n");
+  const lines = String(markdown || "").replace(/\r\n/g, "\n").split("\n");
   const html = [];
   let listMode = null;
 
@@ -1026,6 +1806,12 @@ function initThemeToggle() {
   });
 }
 
+function setAdvancedMode(enabled) {
+  controls.advancedMode.checked = Boolean(enabled);
+  ui.advancedFields.classList.toggle("expanded", Boolean(enabled));
+  ui.advancedFields.setAttribute("aria-hidden", enabled ? "false" : "true");
+}
+
 function initParticleLayer() {
   if (!ui.particleLayer || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
     return;
@@ -1089,18 +1875,63 @@ function resetParticleRepel() {
 
 controls.help.addEventListener("click", loadHelpDoc);
 controls.start.addEventListener("click", startJob);
+controls.cancelJob.addEventListener("click", cancelJob);
+controls.advancedMode.addEventListener("change", () => {
+  setAdvancedMode(controls.advancedMode.checked);
+  scheduleConfigSave();
+});
+controls.cookieExpand.addEventListener("click", expandCookieEditor);
+controls.cookieCollapse.addEventListener("click", collapseCookieEditor);
 controls.edgeDebug.addEventListener("click", launchEdgeDebug);
 controls.autoCookie.addEventListener("click", autoCookie);
 controls.clipboard.addEventListener("click", readClipboard);
 controls.extractCookie.addEventListener("click", extractCookie);
+controls.checkCookie.addEventListener("click", checkCookie);
+controls.clearCookie.addEventListener("click", clearCookie);
 controls.select.addEventListener("click", submitSelection);
 controls.cancelSelect.addEventListener("click", cancelSelection);
+controls.candidateFilter.addEventListener("change", () => renderCandidates(currentRenderedJob));
+controls.candidateSort.addEventListener("change", () => renderCandidates(currentRenderedJob));
+ui.candidateList.addEventListener("change", handleCandidateChange);
+ui.candidateList.addEventListener("click", handleCandidateClick);
 controls.openResultDir.addEventListener("click", openResultDir);
+ui.resultList.addEventListener("click", handleResultClick);
 controls.preview.addEventListener("click", () => {
   if (ui.previewPanel.getAttribute("aria-hidden") === "true") {
     loadMarkdownPreview();
   } else {
     hidePreview();
+  }
+});
+controls.refreshPreview.addEventListener("click", () => loadMarkdownPreview({ force: true }));
+controls.copyMarkdown.addEventListener("click", copyMarkdown);
+controls.logSearch.addEventListener("input", () => renderBackendLogs(currentRenderedJob));
+controls.logLevelFilter.addEventListener("change", () => renderBackendLogs(currentRenderedJob));
+controls.copyLog.addEventListener("click", copyVisibleLogs);
+controls.downloadLog.addEventListener("click", downloadVisibleLogs);
+controls.clearLogView.addEventListener("click", clearLogView);
+controls.logBottom.addEventListener("click", scrollLogToBottom);
+controls.preflightClose.addEventListener("click", closePreflightModal);
+controls.preflightCancel.addEventListener("click", closePreflightModal);
+controls.preflightProceed.addEventListener("click", () => {
+  if (!preflightPendingPayload || controls.preflightProceed.disabled) return;
+  const payload = preflightPendingPayload;
+  closePreflightModal();
+  startJobAfterPreflight(payload);
+});
+ui.preflightPanel.addEventListener("click", () => {
+  if (!ui.preflightPanel.classList.contains("collapsed")) return;
+  clearTimeout(preflightCollapseTimer);
+  setPreflightCollapsed(false);
+});
+controls.preflightToggle?.addEventListener("click", (event) => {
+  event.stopPropagation();
+  clearTimeout(preflightCollapseTimer);
+  setPreflightCollapsed(!ui.preflightPanel.classList.contains("collapsed"));
+});
+ui.preflightOverlay.addEventListener("click", (event) => {
+  if (event.target === ui.preflightOverlay) {
+    closePreflightModal();
   }
 });
 ui.helpClose.addEventListener("click", closeHelpDialog);
@@ -1114,10 +1945,33 @@ window.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && ui.helpOverlay.classList.contains("visible")) {
     closeHelpDialog();
   }
+  if (event.key === "Escape" && ui.preflightOverlay.classList.contains("visible")) {
+    closePreflightModal();
+  }
+});
+document.addEventListener("visibilitychange", () => {
+  if (["running", "awaiting_selection", "exporting"].includes(currentRenderedJob?.status)) {
+    scheduleNextPoll(currentRenderedJob);
+  }
 });
 
-[fields.superTopic, fields.cookie, fields.outputDir].forEach((field) => {
-  field.addEventListener("input", scheduleConfigSave);
+[
+  fields.superTopic,
+  fields.cookie,
+  fields.windowStart,
+  fields.windowEnd,
+  fields.maxPages,
+  fields.topicCommentFactor,
+  fields.pauseSeconds,
+  fields.outputDir,
+].forEach((field) => {
+  field.addEventListener("input", () => {
+    if (field === fields.cookie) {
+      setCookieValidationState("unverified");
+      updateCookieSummary();
+    }
+    scheduleConfigSave();
+  });
 });
 
 initThemeToggle();
@@ -1125,6 +1979,7 @@ initParticleLayer();
 
 initDefaults()
   .then(async () => {
+    restorePreflightCache();
     await refreshStatus();
     await loadHelpDoc();
   })

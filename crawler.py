@@ -1746,6 +1746,7 @@ def download_post_images(
     user_agent: str | None = None,
     progress_callback: Callable[[str], None] | None = None,
     max_workers: int | None = None,
+    cancel_checker: Callable[[], None] | None = None,
 ) -> None:
     image_dir.mkdir(parents=True, exist_ok=True)
     ua = user_agent or (
@@ -1775,6 +1776,8 @@ def download_post_images(
         local_paths: list[str] = []
         uniq_urls = _dedup_image_urls(urls)
         for i, url in enumerate(uniq_urls, start=1):
+            if cancel_checker:
+                cancel_checker()
             ext = _guess_image_ext(url)
             digest = hashlib.md5(url.encode("utf-8")).hexdigest()[:10]
             filename = f"{stem}_{prefix}_{i}_{digest}{ext}"
@@ -1792,6 +1795,8 @@ def download_post_images(
         return local_paths
 
     def _download_one_post(idx: int, post: dict, total: int) -> None:
+        if cancel_checker:
+            cancel_checker()
         session = _new_session()
         try:
             post_id = str(post.get("post_id") or "")
@@ -1805,6 +1810,8 @@ def download_post_images(
 
             if progress_callback:
                 progress_callback(f"下载图片进度 {idx}/{total}: {post_id or '-'}")
+            if cancel_checker:
+                cancel_checker()
 
             post_local_paths = _download_url_list(session, post_urls, post_dir, stem=stem, prefix="post")
             post["downloaded_image_count"] = len(post_local_paths)
@@ -1837,6 +1844,8 @@ def download_post_images(
             post["downloaded_comment_image_count"] = len(all_comment_local_paths)
             post["comment_image_local_paths"] = " | ".join(all_comment_local_paths)
             post["image_local_paths_all"] = " | ".join(post_local_paths + all_comment_local_paths)
+            if cancel_checker:
+                cancel_checker()
         finally:
             session.close()
 
@@ -1847,6 +1856,8 @@ def download_post_images(
     worker_count = max(1, min(int(max_workers or 6), len(rows)))
     if worker_count == 1:
         for idx, post in enumerate(rows, start=1):
+            if cancel_checker:
+                cancel_checker()
             _download_one_post(idx, post, len(rows))
         return
 
@@ -1856,6 +1867,8 @@ def download_post_images(
             for idx, post in enumerate(rows, start=1)
         }
         for future in as_completed(futures):
+            if cancel_checker:
+                cancel_checker()
             idx = futures[future]
             try:
                 future.result()

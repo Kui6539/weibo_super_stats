@@ -29,7 +29,10 @@
         <section class="panel form-panel" aria-label="抓取设置">
           <div class="section-title">
             <h2>抓取设置</h2>
-            <span class="muted">超话、Cookie 与导出参数</span>
+            <label class="mode-switch">
+              <input id="advancedModeToggle" type="checkbox" />
+              <span>高级模式</span>
+            </label>
           </div>
 
           <label class="field wide">
@@ -37,16 +40,49 @@
             <input id="superTopic" type="text" autocomplete="off" />
           </label>
 
-          <label class="field wide">
-            <span>微博 Cookie</span>
-            <textarea id="cookie" rows="6" spellcheck="false"></textarea>
-          </label>
+          <section id="cookiePanel" class="cookie-panel" aria-label="微博 Cookie">
+            <div class="cookie-summary">
+              <div>
+                <h3>微博 Cookie</h3>
+                <p id="cookieSummary" class="muted">未填写 Cookie</p>
+              </div>
+              <span id="cookieStateBadge" class="mini-badge">未验证</span>
+            </div>
+            <div id="cookieEditor" class="cookie-editor hidden">
+              <label class="field wide">
+                <span>Cookie 内容</span>
+                <textarea id="cookie" rows="5" spellcheck="false"></textarea>
+              </label>
+            </div>
+            <div class="button-row cookie-actions">
+              <button id="cookieExpandBtn" type="button" class="secondary">展开编辑 Cookie</button>
+              <button id="cookieCollapseBtn" type="button" class="secondary hidden">收起 Cookie</button>
+              <button id="edgeDebugBtn" type="button" class="secondary">打开调试 Edge</button>
+              <button id="autoCookieBtn" type="button" class="secondary">自动获取 Cookie</button>
+              <button id="clipboardBtn" type="button" class="secondary">读取剪贴板</button>
+              <button id="extractCookieBtn" type="button" class="secondary">识别粘贴内容</button>
+              <button id="checkCookieBtn" type="button" class="secondary">测试 Cookie</button>
+              <button id="clearCookieBtn" type="button" class="secondary danger-button">清空 Cookie</button>
+            </div>
+          </section>
 
-          <div class="button-row">
-            <button id="edgeDebugBtn" type="button" class="secondary">打开调试 Edge</button>
-            <button id="autoCookieBtn" type="button" class="secondary">自动获取 Cookie</button>
-            <button id="clipboardBtn" type="button" class="secondary">读取剪贴板</button>
-            <button id="extractCookieBtn" type="button" class="secondary">识别粘贴内容</button>
+          <div id="preflightPanel" class="preflight-inline hidden" aria-live="polite">
+            <div class="preflight-head">
+              <div class="preflight-meta">
+                <strong>预检查结果</strong>
+                <span id="preflightSummary" class="muted"></span>
+              </div>
+              <button
+                id="preflightToggleBtn"
+                type="button"
+                class="preflight-toggle"
+                aria-controls="preflightList"
+                aria-expanded="true"
+              >
+                收起
+              </button>
+            </div>
+            <div id="preflightList" class="check-list"></div>
           </div>
 
           <div class="grid two">
@@ -60,7 +96,12 @@
             </label>
           </div>
 
-          <div class="grid three">
+          <div id="advancedFields" class="advanced-fields" aria-hidden="true">
+            <div class="section-title compact advanced-title">
+              <h2>高级参数</h2>
+              <span class="muted">隐藏时仍使用当前保存值或默认值</span>
+            </div>
+            <div class="grid three">
             <label class="field">
               <span>最大页数</span>
               <input id="maxPages" type="number" min="1" step="1" />
@@ -73,6 +114,7 @@
               <span>请求间隔</span>
               <input id="pauseSeconds" type="number" min="0" step="0.1" />
             </label>
+            </div>
           </div>
 
           <label class="field wide">
@@ -81,6 +123,7 @@
           </label>
 
           <div class="button-row end">
+            <button id="cancelJobBtn" type="button" class="secondary danger-button hidden">取消任务</button>
             <button id="startBtn" type="button" class="primary">开始抓取并导出</button>
           </div>
         </section>
@@ -101,10 +144,32 @@
           </div>
           <div id="resultList" class="result-list"></div>
         </section>
+
+        <section id="logPanel" class="panel log-panel" aria-label="任务日志">
+          <div class="section-title">
+            <h2>任务日志</h2>
+            <span id="logCount" class="muted">暂无日志</span>
+          </div>
+          <div class="log-tools">
+            <input id="logSearch" type="search" placeholder="搜索日志" autocomplete="off" />
+            <select id="logLevelFilter" aria-label="日志等级过滤">
+              <option value="all">全部</option>
+              <option value="normal">普通</option>
+              <option value="success">成功</option>
+              <option value="warning">警告</option>
+              <option value="error">错误</option>
+            </select>
+            <button id="copyLogBtn" type="button" class="secondary">复制日志</button>
+            <button id="downloadLogBtn" type="button" class="secondary">下载日志</button>
+            <button id="clearLogViewBtn" type="button" class="secondary">清空显示</button>
+            <button id="logBottomBtn" type="button" class="secondary">滚动到底部</button>
+          </div>
+          <div id="backendLogBox" class="backend-log" aria-live="polite"></div>
+        </section>
       </div>
 
       <section id="candidatePanel" class="side-panel candidate-panel" aria-label="人工筛选" aria-hidden="true">
-        <div class="side-toolbar">
+        <div class="side-toolbar candidate-toolbar">
           <div class="section-title compact">
             <h2>人工筛选</h2>
             <span id="pickCount" class="muted"></span>
@@ -113,6 +178,22 @@
             <button id="selectBtn" type="button" class="primary">确认入选</button>
             <button id="cancelSelectBtn" type="button" class="secondary">取消</button>
           </div>
+        </div>
+        <div class="candidate-filterbar">
+          <select id="candidateFilter" aria-label="候选筛选">
+            <option value="all">全部</option>
+            <option value="selected">已选</option>
+            <option value="unselected">未选</option>
+            <option value="images">有图</option>
+            <option value="high_comments">高评论</option>
+          </select>
+          <select id="candidateSort" aria-label="候选排序">
+            <option value="score">综合分</option>
+            <option value="likes">点赞数</option>
+            <option value="comments">评论数</option>
+            <option value="reposts">转发数</option>
+            <option value="publish_time">发布时间</option>
+          </select>
         </div>
         <div id="candidateList" class="candidate-list"></div>
       </section>
@@ -123,10 +204,31 @@
             <h2>Markdown 周报预览</h2>
             <p id="previewPath" class="muted"></p>
           </div>
+          <div class="preview-actions">
+            <button id="refreshPreviewBtn" type="button" class="secondary">刷新预览</button>
+            <button id="copyMarkdownBtn" type="button" class="secondary">复制 Markdown</button>
+          </div>
         </div>
         <article id="previewContent" class="markdown-body"></article>
       </section>
     </main>
+
+    <div id="preflightOverlay" class="preflight-overlay" aria-hidden="true">
+      <section class="preflight-dialog" role="dialog" aria-modal="true" aria-labelledby="preflightTitle">
+        <div class="side-toolbar">
+          <div>
+            <h2 id="preflightTitle">开始前预检查</h2>
+            <p id="preflightModalSummary" class="muted"></p>
+          </div>
+          <button id="preflightCloseBtn" type="button" class="secondary">关闭</button>
+        </div>
+        <div id="preflightModalList" class="check-list modal-check-list"></div>
+        <div class="preflight-actions">
+          <button id="preflightCancelBtn" type="button" class="secondary">取消</button>
+          <button id="preflightProceedBtn" type="button" class="primary">仍然开始</button>
+        </div>
+      </section>
+    </div>
 
     <div id="helpOverlay" class="help-overlay" aria-hidden="true">
       <section id="helpDialog" class="help-dialog" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
