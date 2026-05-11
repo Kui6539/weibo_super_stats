@@ -16,7 +16,16 @@ from urllib.request import Request, urlopen
 
 from modules.cookie_parser import extract_cookie_from_text, mask_cookie_for_log, normalize_cookie
 
-CDP_DEFAULT_ENDPOINTS = ("http://127.0.0.1:9222", "http://localhost:9222")
+CDP_BROWSER_DEFAULTS = {
+    "edge": {"label": "Edge", "profile_dir": ".edge_cdp_profile", "port": 9222},
+    "chrome": {"label": "Chrome", "profile_dir": ".chrome_cdp_profile", "port": 9223},
+}
+CDP_DEFAULT_ENDPOINTS = (
+    "http://127.0.0.1:9222",
+    "http://localhost:9222",
+    "http://127.0.0.1:9223",
+    "http://localhost:9223",
+)
 CDP_ENV_VAR = "WEIBO_COOKIE_CDP_URL"
 WEIBO_LOGIN_COOKIE_NAMES = {"SUB"}
 WEIBO_COOKIE_URLS = (
@@ -25,11 +34,15 @@ WEIBO_COOKIE_URLS = (
 )
 __all__ = [
     "CookieFetchError",
+    "browser_display_name",
+    "close_debug_browser",
     "close_edge_debug_browser",
     "extract_cookie_from_text",
     "get_weibo_cookie_header",
+    "launch_debug_browser",
     "launch_edge_debug_browser",
     "mask_cookie_for_log",
+    "normalize_browser_name",
     "normalize_cookie",
 ]
 
@@ -38,8 +51,20 @@ class CookieFetchError(Exception):
     pass
 
 
-def get_weibo_cookie_header() -> str:
-    cdp_cookie, cdp_err = _try_get_cookie_header_from_cdp()
+def normalize_browser_name(browser: str | None) -> str:
+    value = str(browser or "").strip().lower()
+    if value in {"chrome", "google", "google-chrome", "google chrome"}:
+        return "chrome"
+    return "edge"
+
+
+def browser_display_name(browser: str | None) -> str:
+    return str(CDP_BROWSER_DEFAULTS[normalize_browser_name(browser)]["label"])
+
+
+def get_weibo_cookie_header(browser: str | None = None) -> str:
+    selected_browser = normalize_browser_name(browser) if browser else ""
+    cdp_cookie, cdp_err = _try_get_cookie_header_from_cdp(selected_browser or None)
     if cdp_cookie:
         return cdp_cookie
 
@@ -50,7 +75,7 @@ def get_weibo_cookie_header() -> str:
             "缺少 browser-cookie3 依赖，请先运行 pip install -r requirements.txt 安装依赖。"
         ) from exc
 
-    browser_funcs = [("Edge", bc3.edge), ("Chrome", bc3.chrome)]
+    browser_funcs = _browser_loaders(bc3, selected_browser)
     domains = ("weibo.com",)
     read_errors: list[str] = []
     no_cookie_errors: list[str] = []
@@ -106,8 +131,8 @@ def get_weibo_cookie_header() -> str:
         extra = "（关键错误: " + "；".join(read_errors[-4:]) + "）"
         cdp_hint = f"；CDP 检查: {cdp_err}" if cdp_err else ""
         raise CookieFetchError(
-            "检测到 Edge/Chrome 的 Cookie 数据库正在被占用或需要更高权限，当前普通权限无法读取。"
-            "推荐点击页面里的“打开调试 Edge”，在新窗口登录微博后再点“自动获取 Cookie”。"
+            f"检测到 {_browser_error_label(selected_browser)} 的 Cookie 数据库正在被占用或需要更高权限，当前普通权限无法读取。"
+            "推荐点击页面里的“打开调试浏览器”，在新窗口登录微博后再点“自动获取 Cookie”。"
             "也可以使用页面里的“读取剪贴板/识别粘贴内容”手动导入。"
             + cdp_hint
             + extra
@@ -115,24 +140,27 @@ def get_weibo_cookie_header() -> str:
     if no_cookie_errors:
         extra = "（最近检查: " + "；".join(no_cookie_errors[-4:]) + "）"
     raise CookieFetchError(
-        "未能从 Edge/Chrome 读取到微博登录态 Cookie。请确认已在浏览器窗口登录微博；"
-        "若仍失败，请点击页面里的“打开调试 Edge”，在新窗口登录微博后重试，"
+        f"未能从 {_browser_error_label(selected_browser)} 读取到微博登录态 Cookie。请确认已在所选浏览器窗口登录微博；"
+        "若仍失败，请点击页面里的“打开调试浏览器”，在新窗口登录微博后重试，"
         "或使用页面里的“读取剪贴板/识别粘贴内容”。"
         + extra
     )
 
 
-def launch_edge_debug_browser(profile_dir: Path | None = None, port: int = 9222) -> str:
-    edge_exe = _find_edge_exe()
-    if not edge_exe:
-        raise CookieFetchError("未找到 Microsoft Edge，可改用手动粘贴 Cookie。")
+def launch_debug_browser(browser: str | None = None, profile_dir: Path | None = None, port: int | None = None) -> str:
+    browser_key = normalize_browser_name(browser)
+    browser_label = browser_display_name(browser_key)
+    browser_exe = _find_browser_exe(browser_key)
+    if not browser_exe:
+        raise CookieFetchError(f"未找到 {browser_label}，可切换其他浏览器或改用手动粘贴 Cookie。")
 
-    profile_path = profile_dir or (Path.cwd() / ".edge_cdp_profile")
+    profile_path = profile_dir or (Path.cwd() / str(CDP_BROWSER_DEFAULTS[browser_key]["profile_dir"]))
     profile_path.mkdir(parents=True, exist_ok=True)
-    endpoint = f"http://127.0.0.1:{port}"
+    debug_port = int(port or CDP_BROWSER_DEFAULTS[browser_key]["port"])
+    endpoint = f"http://127.0.0.1:{debug_port}"
     args = [
-        str(edge_exe),
-        f"--remote-debugging-port={port}",
+        str(browser_exe),
+        f"--remote-debugging-port={debug_port}",
         f"--user-data-dir={profile_path}",
         "--no-first-run",
         "--new-window",
@@ -142,8 +170,12 @@ def launch_edge_debug_browser(profile_dir: Path | None = None, port: int = 9222)
     return endpoint
 
 
-def close_edge_debug_browser() -> bool:
-    for endpoint in _cdp_endpoints():
+def launch_edge_debug_browser(profile_dir: Path | None = None, port: int = 9222) -> str:
+    return launch_debug_browser("edge", profile_dir=profile_dir, port=port)
+
+
+def close_debug_browser(browser: str | None = None) -> bool:
+    for endpoint in _cdp_endpoints(normalize_browser_name(browser) if browser else None):
         try:
             version = _fetch_json(f"{endpoint}/json/version", timeout=1.5)
         except Exception:
@@ -162,6 +194,28 @@ def close_edge_debug_browser() -> bool:
     return False
 
 
+def close_edge_debug_browser() -> bool:
+    return close_debug_browser("edge")
+
+
+def _browser_loaders(browser_cookie3_module, browser: str) -> list[tuple[str, object]]:
+    loaders = {
+        "edge": [("Edge", browser_cookie3_module.edge)],
+        "chrome": [("Chrome", browser_cookie3_module.chrome)],
+    }
+    if browser:
+        return loaders[normalize_browser_name(browser)]
+    return [*loaders["edge"], *loaders["chrome"]]
+
+
+def _browser_error_label(browser: str) -> str:
+    return browser_display_name(browser) if browser else "Edge/Chrome"
+
+
+def _find_browser_exe(browser: str | None) -> Path | None:
+    return _find_chrome_exe() if normalize_browser_name(browser) == "chrome" else _find_edge_exe()
+
+
 def _find_edge_exe() -> Path | None:
     found = shutil.which("msedge")
     if found:
@@ -177,11 +231,29 @@ def _find_edge_exe() -> Path | None:
     return None
 
 
-def _try_get_cookie_header_from_cdp() -> tuple[str, str | None]:
-    endpoints = _cdp_endpoints()
+def _find_chrome_exe() -> Path | None:
+    for command in ("chrome", "chrome.exe", "google-chrome"):
+        found = shutil.which(command)
+        if found:
+            return Path(found)
+    candidates = [
+        Path(os.environ.get("PROGRAMFILES", "")) / "Google" / "Chrome" / "Application" / "chrome.exe",
+        Path(os.environ.get("PROGRAMFILES(X86)", "")) / "Google" / "Chrome" / "Application" / "chrome.exe",
+        Path(os.environ.get("LOCALAPPDATA", "")) / "Google" / "Chrome" / "Application" / "chrome.exe",
+    ]
+    for candidate in candidates:
+        if candidate.exists() and candidate.is_file():
+            return candidate
+    return None
+
+
+def _try_get_cookie_header_from_cdp(browser: str | None = None) -> tuple[str, str | None]:
+    browser_key = normalize_browser_name(browser) if browser else None
+    browser_label = browser_display_name(browser_key) if browser_key else "浏览器"
+    endpoints = _cdp_endpoints(browser_key)
     errors: list[str] = []
     for endpoint in endpoints:
-        cookie, err = _try_cdp_endpoint(endpoint)
+        cookie, err = _try_cdp_endpoint(endpoint, browser_label)
         if cookie:
             return cookie, None
         if err:
@@ -191,14 +263,17 @@ def _try_get_cookie_header_from_cdp() -> tuple[str, str | None]:
     return "", "未配置 CDP 调试端口"
 
 
-def _cdp_endpoints() -> list[str]:
+def _cdp_endpoints(browser: str | None = None) -> list[str]:
     configured = os.environ.get(CDP_ENV_VAR, "").strip()
     if configured:
         return [configured.rstrip("/")]
+    if browser:
+        port = int(CDP_BROWSER_DEFAULTS[normalize_browser_name(browser)]["port"])
+        return [f"http://127.0.0.1:{port}", f"http://localhost:{port}"]
     return [endpoint.rstrip("/") for endpoint in CDP_DEFAULT_ENDPOINTS]
 
 
-def _try_cdp_endpoint(endpoint: str) -> tuple[str, str | None]:
+def _try_cdp_endpoint(endpoint: str, browser_label: str = "浏览器") -> tuple[str, str | None]:
     try:
         version = _fetch_json(f"{endpoint}/json/version", timeout=1.5)
     except Exception as exc:
@@ -224,7 +299,7 @@ def _try_cdp_endpoint(endpoint: str) -> tuple[str, str | None]:
         browser_err = "json/version 未提供 browser websocket"
 
     details = [*target_errors[-2:], browser_err]
-    return "", "CDP 已连接，但没有读到微博登录态 Cookie；请在调试 Edge 窗口登录微博后重试。" + (
+    return "", f"CDP 已连接，但没有读到微博登录态 Cookie；请在调试 {browser_label} 窗口登录微博后重试。" + (
         "（" + "；".join(d for d in details if d) + "）" if details else ""
     )
 

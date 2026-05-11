@@ -10,6 +10,7 @@ __pycache__/
 
 output/
 .edge_cdp_profile/
+.chrome_cdp_profile/
 weibo_stats_config.json
 *.log
 

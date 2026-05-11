@@ -62,14 +62,20 @@
             </div>
 
             <div class="cookie-methods">
-              <section class="cookie-method-card recommended">
+              <section class="cookie-method-card recommended auto-cookie-card">
                 <div>
-                  <span class="cookie-action-label">推荐方式</span>
-                  <h4>调试 Edge 自动读取</h4>
-                  <p>先打开调试 Edge 并登录微博，再自动读取当前登录态。</p>
+                  <div class="cookie-method-header">
+                    <span class="cookie-action-label">推荐方式</span>
+                    <div class="cookie-browser-switch" aria-label="选择调试浏览器">
+                      <button id="cookieBrowserEdgeBtn" type="button" class="browser-choice active" aria-pressed="true">Edge</button>
+                      <button id="cookieBrowserChromeBtn" type="button" class="browser-choice" aria-pressed="false">Chrome</button>
+                    </div>
+                  </div>
+                  <h4>调试浏览器自动读取</h4>
+                  <p>先打开所选调试浏览器并登录微博，再自动读取当前登录态。</p>
                 </div>
                 <div class="cookie-action-buttons">
-                  <button id="edgeDebugBtn" type="button" class="secondary">打开调试 Edge</button>
+                  <button id="edgeDebugBtn" type="button" class="secondary">打开调试浏览器</button>
                   <button id="autoCookieBtn" type="button" class="secondary">自动读取 Cookie</button>
                 </div>
               </section>
@@ -184,10 +190,19 @@
           </div>
         </section>
 
-        <section id="logPanel" class="panel log-panel" aria-label="任务日志">
-          <div class="section-title">
-            <h2>任务日志</h2>
-            <span id="logCount" class="muted">暂无日志</span>
+        <button id="logBubble" class="log-bubble" type="button" aria-label="展开任务日志" aria-expanded="false">
+          <span class="log-bubble-dot" aria-hidden="true"></span>
+          <span class="log-bubble-text">任务日志</span>
+          <span id="logBubbleCount" class="log-bubble-count">0</span>
+        </button>
+
+        <section id="logPanel" class="panel log-panel floating-log-panel hidden" aria-label="任务日志" aria-hidden="true">
+          <div id="logDragHandle" class="section-title log-window-title">
+            <div>
+              <h2>任务日志</h2>
+              <span id="logCount" class="muted">暂无日志</span>
+            </div>
+            <button id="logPanelHideBtn" type="button" class="secondary compact-button">隐藏</button>
           </div>
           <div class="log-tools">
             <input id="logSearch" type="search" placeholder="搜索日志" autocomplete="off" />

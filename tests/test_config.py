@@ -34,7 +34,20 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(cleared["cookie"], "")
         self.assertEqual(cleared["super_topic"], "100808abc")
 
+    def test_log_position_migrates_and_normalizes(self) -> None:
+        data = config.migrate_config({"log_position": {"mode": "panel", "left": "123.8", "top": 99.2}})
+        self.assertEqual(data["log_position"], {"mode": "panel", "left": 123, "top": 99})
+
+        fallback = config.migrate_config({"log_position": {"mode": "bad", "left": -10, "top": "bad"}})
+        self.assertEqual(fallback["log_position"], {"mode": "bubble", "left": 0, "top": 86})
+
+    def test_cookie_browser_migrates_and_normalizes(self) -> None:
+        chrome = config.migrate_config({"cookie_browser": "Chrome"})
+        self.assertEqual(chrome["cookie_browser"], "chrome")
+
+        fallback = config.migrate_config({"cookie_browser": "firefox"})
+        self.assertEqual(fallback["cookie_browser"], "edge")
+
 
 if __name__ == "__main__":
     unittest.main()
-

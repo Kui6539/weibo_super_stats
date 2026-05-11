@@ -1,5 +1,5 @@
 window.WeiboConfig = {
-  createController({ api, formController, themeController, cookieController, setSaveState }) {
+  createController({ api, formController, themeController, cookieController, logsController, setSaveState }) {
     let configReady = false;
     let configSaveTimer = null;
 
@@ -16,7 +16,11 @@ window.WeiboConfig = {
       try {
         await api("/api/config", {
           method: "POST",
-          body: JSON.stringify(formController.configPayload()),
+          body: JSON.stringify({
+            ...formController.configPayload(),
+            log_position: logsController.getPosition(),
+            cookie_browser: cookieController.getBrowser(),
+          }),
         });
         setSaveState("配置已保存", "saved");
       } catch (err) {
@@ -29,7 +33,9 @@ window.WeiboConfig = {
       const defaults = data.defaults || {};
       formController.applyDefaults(defaults);
       themeController.apply(defaults.theme === "light" ? "light" : "dark");
+      cookieController.setBrowser(defaults.cookie_browser || "edge", { silent: true });
       cookieController.updateSummary();
+      logsController.applyPosition(defaults.log_position);
       configReady = true;
       setSaveState("配置自动保存", "ready");
     }

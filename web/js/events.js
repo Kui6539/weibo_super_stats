@@ -24,6 +24,8 @@ window.WeiboEvents = {
 
     controls.cookieExpand.addEventListener("click", () => cookieController.expandEditor());
     controls.cookieCollapse.addEventListener("click", () => cookieController.collapseEditor());
+    controls.cookieBrowserEdge?.addEventListener("click", () => cookieController.setBrowser("edge"));
+    controls.cookieBrowserChrome?.addEventListener("click", () => cookieController.setBrowser("chrome"));
     controls.edgeDebug.addEventListener("click", () => cookieController.launchEdgeDebug());
     controls.autoCookie.addEventListener("click", () => cookieController.autoCookie());
     controls.clipboard.addEventListener("click", () => cookieController.readClipboard());
@@ -64,6 +66,10 @@ window.WeiboEvents = {
     controls.downloadLog.addEventListener("click", () => logsController.downloadVisible());
     controls.clearLogView.addEventListener("click", () => logsController.clearView());
     controls.logBottom.addEventListener("click", () => logsController.scrollToBottom());
+    controls.logBubble.addEventListener("click", () => logsController.handleBubbleClick());
+    controls.logBubble.addEventListener("pointerdown", (event) => logsController.startBubbleDrag(event));
+    controls.logPanelHide.addEventListener("click", () => logsController.hidePanel());
+    ui.logDragHandle.addEventListener("pointerdown", (event) => logsController.startPanelDrag(event));
 
     controls.preflightClose.addEventListener("click", () => preflightController.closeModal());
     controls.preflightCancel.addEventListener("click", () => preflightController.closeModal());
@@ -118,5 +124,7 @@ window.WeiboEvents = {
         configController.scheduleSave();
       });
     });
+
+    logsController.initFloating();
   },
 };

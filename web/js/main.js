@@ -19,6 +19,8 @@ const controls = {
   cancelJob: $("cancelJobBtn"),
   edgeDebug: $("edgeDebugBtn"),
   autoCookie: $("autoCookieBtn"),
+  cookieBrowserEdge: $("cookieBrowserEdgeBtn"),
+  cookieBrowserChrome: $("cookieBrowserChromeBtn"),
   clipboard: $("clipboardBtn"),
   extractCookie: $("extractCookieBtn"),
   checkCookie: $("checkCookieBtn"),
@@ -39,6 +41,8 @@ const controls = {
   downloadLog: $("downloadLogBtn"),
   clearLogView: $("clearLogViewBtn"),
   logBottom: $("logBottomBtn"),
+  logBubble: $("logBubble"),
+  logPanelHide: $("logPanelHideBtn"),
   checkCache: $("checkCacheBtn"),
   reexport: $("reexportBtn"),
   preflightToggle: $("preflightToggleBtn"),
@@ -58,6 +62,8 @@ const ui = {
   logPanel: $("logPanel"),
   backendLogBox: $("backendLogBox"),
   logCount: $("logCount"),
+  logBubbleCount: $("logBubbleCount"),
+  logDragHandle: $("logDragHandle"),
   candidatePanel: $("candidatePanel"),
   candidateList: $("candidateList"),
   pickCount: $("pickCount"),
@@ -161,6 +167,8 @@ const logsController = window.WeiboLogs.createController({
   showToast,
   getCurrentJob: () => taskController?.getCurrentJob(),
   stageLabel: progressController.stageName,
+  clamp,
+  onPositionChange: () => configController?.scheduleSave(),
 });
 
 const toastController = window.WeiboToast.createController({ sanitizeLogMessage });
@@ -226,6 +234,7 @@ configController = window.WeiboConfig.createController({
   formController,
   themeController,
   cookieController,
+  logsController,
   setSaveState,
 });
 

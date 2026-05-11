@@ -12,12 +12,16 @@ window.WeiboCookie = {
     resetPreflightInline,
   }) {
     let cookieValidationState = "unverified";
+    let selectedBrowser = "edge";
 
     async function launchEdgeDebug() {
       setBusy(controls.edgeDebug, true, "正在打开");
       try {
-        const data = await api("/api/cookie/edge-debug", { method: "POST", body: "{}" });
-        showToast(`调试 Edge 已启动：${data.endpoint}`);
+        const data = await api("/api/cookie/edge-debug", {
+          method: "POST",
+          body: JSON.stringify({ browser: selectedBrowser }),
+        });
+        showToast(`调试 ${data.browser_label || browserLabel()} 已启动：${data.endpoint}`);
       } catch (err) {
         appendClientLog(err.message);
       } finally {
@@ -28,13 +32,17 @@ window.WeiboCookie = {
     async function autoCookie() {
       setBusy(controls.autoCookie, true, "正在读取");
       try {
-        const data = await api("/api/cookie/auto", { method: "POST", body: "{}" });
+        const data = await api("/api/cookie/auto", {
+          method: "POST",
+          body: JSON.stringify({ browser: selectedBrowser }),
+        });
         fields.cookie.value = data.cookie || "";
         setValidationState("unverified");
         updateSummary();
         resetPreflightInline();
         await saveConfigNow();
-        showToast(data.debug_edge_closed ? "Cookie 自动读取成功，调试 Edge 已关闭。" : "Cookie 自动读取成功。");
+        const label = data.browser_label || browserLabel();
+        showToast(data.debug_browser_closed ? `Cookie 自动读取成功，调试 ${label} 已关闭。` : "Cookie 自动读取成功。");
       } catch (err) {
         appendClientLog(err.message);
       } finally {
@@ -136,6 +144,36 @@ window.WeiboCookie = {
       cookieValidationState = state || "unverified";
     }
 
+    function setBrowser(browser, options = {}) {
+      selectedBrowser = normalizeBrowser(browser);
+      updateBrowserButtons();
+      if (!options.silent) {
+        scheduleConfigSave();
+      }
+    }
+
+    function getBrowser() {
+      return selectedBrowser;
+    }
+
+    function updateBrowserButtons() {
+      const isEdge = selectedBrowser === "edge";
+      const switchEl = controls.cookieBrowserEdge?.closest(".cookie-browser-switch");
+      switchEl?.classList.toggle("is-chrome", !isEdge);
+      controls.cookieBrowserEdge?.classList.toggle("active", isEdge);
+      controls.cookieBrowserChrome?.classList.toggle("active", !isEdge);
+      controls.cookieBrowserEdge?.setAttribute("aria-pressed", String(isEdge));
+      controls.cookieBrowserChrome?.setAttribute("aria-pressed", String(!isEdge));
+    }
+
+    function normalizeBrowser(browser) {
+      return String(browser || "").toLowerCase() === "chrome" ? "chrome" : "edge";
+    }
+
+    function browserLabel() {
+      return selectedBrowser === "chrome" ? "Chrome" : "Edge";
+    }
+
     function updateSummary() {
       const length = fields.cookie.value.trim().length;
       ui.cookieSummary.textContent = length ? `已填写 Cookie，长度 ${length} 字符` : "未填写 Cookie";
@@ -169,6 +207,8 @@ window.WeiboCookie = {
       clearCookie,
       expandEditor,
       collapseEditor,
+      getBrowser,
+      setBrowser,
       setValidationState,
       updateSummary,
     };

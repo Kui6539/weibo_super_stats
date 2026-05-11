@@ -25,6 +25,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "output_dir": "output",
     "theme": "dark",
     "advanced_mode": "false",
+    "log_position": {"mode": "bubble", "left": 18, "top": 86},
+    "cookie_browser": "edge",
 }
 
 
@@ -69,7 +71,7 @@ def load_config() -> dict[str, Any]:
         return dict(DEFAULT_CONFIG)
 
 
-def load_saved_config() -> dict[str, str]:
+def load_saved_config() -> dict[str, Any]:
     data = load_config()
     theme = str(data.get("theme") or "").strip().lower()
     if theme not in {"dark", "light"}:
@@ -86,6 +88,8 @@ def load_saved_config() -> dict[str, str]:
         "output_dir": str(data.get("output_dir") or "").strip(),
         "theme": theme,
         "advanced_mode": advanced_mode,
+        "log_position": normalize_log_position(data.get("log_position")),
+        "cookie_browser": normalize_cookie_browser(data.get("cookie_browser")),
     }
 
 
@@ -95,6 +99,10 @@ def migrate_config(config: dict[str, Any]) -> dict[str, Any]:
     for key in ("super_topic", "cookie", "max_pages", "topic_comment_factor", "pause_seconds", "output_dir", "theme", "advanced_mode"):
         if key in source:
             migrated[key] = str(source.get(key) or "").strip()
+    if "log_position" in source:
+        migrated["log_position"] = normalize_log_position(source.get("log_position"))
+    if "cookie_browser" in source:
+        migrated["cookie_browser"] = normalize_cookie_browser(source.get("cookie_browser"))
     theme = str(migrated.get("theme") or "").lower()
     migrated["theme"] = theme if theme in {"dark", "light"} else "dark"
     migrated["advanced_mode"] = "true" if _as_bool(migrated.get("advanced_mode")) else "false"
@@ -108,7 +116,7 @@ def save_config(config: dict[str, Any]) -> dict[str, Any]:
     return clean
 
 
-def save_user_config(payload: dict[str, Any]) -> dict[str, str]:
+def save_user_config(payload: dict[str, Any]) -> dict[str, Any]:
     current = load_config()
     for key in ("super_topic", "cookie", "max_pages", "topic_comment_factor", "pause_seconds", "output_dir"):
         if key in payload:
@@ -119,6 +127,10 @@ def save_user_config(payload: dict[str, Any]) -> dict[str, str]:
             current["theme"] = theme
     if "advanced_mode" in payload:
         current["advanced_mode"] = "true" if _as_bool(payload.get("advanced_mode")) else "false"
+    if "log_position" in payload:
+        current["log_position"] = normalize_log_position(payload.get("log_position"))
+    if "cookie_browser" in payload:
+        current["cookie_browser"] = normalize_cookie_browser(payload.get("cookie_browser"))
     return _strip_config_for_ui(save_config(current))
 
 
@@ -282,6 +294,8 @@ def app_defaults() -> dict[str, Any]:
         "output_dir": str(Path.cwd() / "output"),
         "theme": "dark",
         "advanced_mode": "false",
+        "log_position": {"mode": "bubble", "left": 18, "top": 86},
+        "cookie_browser": "edge",
     }
     defaults.update({key: value for key, value in saved.items() if value})
     return defaults
@@ -293,7 +307,33 @@ def _as_bool(value: Any) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on", "是"}
 
 
-def _strip_config_for_ui(config: dict[str, Any]) -> dict[str, str]:
+def normalize_log_position(value: Any) -> dict[str, Any]:
+    default = {"mode": "bubble", "left": 18, "top": 86}
+    if not isinstance(value, dict):
+        return dict(default)
+    mode = str(value.get("mode") or "bubble").strip().lower()
+    if mode not in {"bubble", "panel"}:
+        mode = "bubble"
+    left = _safe_int(value.get("left"), default["left"])
+    top = _safe_int(value.get("top"), default["top"])
+    left = max(0, min(left, 10000))
+    top = max(0, min(top, 10000))
+    return {"mode": mode, "left": left, "top": top}
+
+
+def normalize_cookie_browser(value: Any) -> str:
+    browser = str(value or "").strip().lower()
+    return "chrome" if browser in {"chrome", "google", "google-chrome", "google chrome"} else "edge"
+
+
+def _safe_int(value: Any, default: int) -> int:
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return default
+
+
+def _strip_config_for_ui(config: dict[str, Any]) -> dict[str, Any]:
     return {
         "super_topic": str(config.get("super_topic") or "").strip(),
         "cookie": str(config.get("cookie") or "").strip(),
@@ -303,6 +343,8 @@ def _strip_config_for_ui(config: dict[str, Any]) -> dict[str, str]:
         "output_dir": str(config.get("output_dir") or "").strip(),
         "theme": str(config.get("theme") or "").strip(),
         "advanced_mode": str(config.get("advanced_mode") or "").strip(),
+        "log_position": normalize_log_position(config.get("log_position")),
+        "cookie_browser": normalize_cookie_browser(config.get("cookie_browser")),
     }
 
 

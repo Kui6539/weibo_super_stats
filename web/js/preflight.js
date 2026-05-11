@@ -15,11 +15,15 @@ window.WeiboPreflight = {
         resetInline();
         return;
       }
+      const wasHidden = ui.preflightPanel.classList.contains("hidden");
       ui.preflightPanel.classList.remove("hidden");
       lastPreflight = preflight;
       ui.preflightSummary.textContent = summaryText(checks);
       renderCheckList(ui.preflightList, checks);
       setCollapsed(collapsed);
+      if (!restore && wasHidden && !collapsed) {
+        playEnterAnimation();
+      }
       if (!restore) {
         preflightCollapseTimer = window.setTimeout(() => {
           setCollapsed(true);
@@ -52,6 +56,15 @@ window.WeiboPreflight = {
         controls.preflightToggle.setAttribute("aria-expanded", isCollapsed ? "false" : "true");
       }
       persistCache(isCollapsed);
+    }
+
+    function playEnterAnimation() {
+      ui.preflightPanel.classList.remove("preflight-entering");
+      void ui.preflightPanel.offsetWidth;
+      ui.preflightPanel.classList.add("preflight-entering");
+      window.setTimeout(() => {
+        ui.preflightPanel.classList.remove("preflight-entering");
+      }, 420);
     }
 
     function formKey(payload = readForm()) {

@@ -10,10 +10,12 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from cookie_helper import (
     CookieFetchError,
-    close_edge_debug_browser,
+    browser_display_name,
+    close_debug_browser,
     extract_cookie_from_text,
     get_weibo_cookie_header,
-    launch_edge_debug_browser,
+    launch_debug_browser,
+    normalize_browser_name,
 )
 from core.cache import CacheStore
 from core.config import (
@@ -283,19 +285,34 @@ class AppRequestHandler(BaseHTTPRequestHandler):
         send_json(self, {"path": str(result_dir)})
 
     def handle_cookie_auto(self) -> None:
-        console_log("正在自动读取浏览器 Cookie...")
-        cookie = get_weibo_cookie_header()
-        console_log("Cookie 自动读取成功。")
-        debug_edge_closed = close_edge_debug_browser()
-        if debug_edge_closed:
-            console_log("调试 Edge 已自动关闭。")
-        send_json(self, {"cookie": cookie, "debug_edge_closed": debug_edge_closed})
+        payload = parse_json_body(self)
+        browser = normalize_browser_name(payload.get("browser"))
+        browser_label = browser_display_name(browser)
+        console_log(f"正在自动读取 {browser_label} Cookie...")
+        cookie = get_weibo_cookie_header(browser=browser)
+        console_log(f"{browser_label} Cookie 自动读取成功。")
+        debug_browser_closed = close_debug_browser(browser)
+        if debug_browser_closed:
+            console_log(f"调试 {browser_label} 已自动关闭。")
+        send_json(
+            self,
+            {
+                "cookie": cookie,
+                "browser": browser,
+                "browser_label": browser_label,
+                "debug_browser_closed": debug_browser_closed,
+                "debug_edge_closed": debug_browser_closed if browser == "edge" else False,
+            },
+        )
 
     def handle_cookie_edge_debug(self) -> None:
-        console_log("正在打开调试 Edge...")
-        endpoint = launch_edge_debug_browser(ROOT_DIR / ".edge_cdp_profile")
-        console_log(f"调试 Edge 已启动：{endpoint}")
-        send_json(self, {"endpoint": endpoint})
+        payload = parse_json_body(self)
+        browser = normalize_browser_name(payload.get("browser"))
+        browser_label = browser_display_name(browser)
+        console_log(f"正在打开调试 {browser_label}...")
+        endpoint = launch_debug_browser(browser, ROOT_DIR / f".{browser}_cdp_profile")
+        console_log(f"调试 {browser_label} 已启动：{endpoint}")
+        send_json(self, {"endpoint": endpoint, "browser": browser, "browser_label": browser_label})
 
     def handle_cookie_extract(self) -> None:
         payload = parse_json_body(self)
