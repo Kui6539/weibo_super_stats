@@ -224,6 +224,7 @@
   padding: 1px;
   overflow: hidden;
   background: rgba(0, 0, 0, 0.18);
+  -webkit-backdrop-filter: blur(8px);
   backdrop-filter: blur(8px);
 }
 
