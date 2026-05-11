@@ -32,6 +32,9 @@ from openpyxl.styles import Alignment, Font
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
+from modules.crawler_filters import should_exclude_post
+from modules.crawler_scoring import calculate_score
+
 SUPER_TOPIC_ID_PATTERN = re.compile(r"/p/([0-9a-fA-F]+)")
 FM_VIEW_MARKER = "FM.view("
 COMMENTS_API_URL = "https://weibo.com/ajax/statuses/buildComments"
@@ -97,6 +100,9 @@ class WeiboSuperTopicCrawler:
         cookie: str,
         user_agent: str | None = None,
         progress_callback: Callable[[str], None] | None = None,
+        stage_callback: Callable[[str, list[dict]], None] | None = None,
+        comment_cache_reader: Callable[[str], dict | None] | None = None,
+        comment_cache_writer: Callable[[str, dict], None] | None = None,
     ) -> None:
         self.cookie = cookie.strip()
         self.user_agent = user_agent or (
@@ -105,6 +111,9 @@ class WeiboSuperTopicCrawler:
             "Chrome/124.0.0.0 Safari/537.36"
         )
         self.progress_callback = progress_callback
+        self.stage_callback = stage_callback
+        self.comment_cache_reader = comment_cache_reader
+        self.comment_cache_writer = comment_cache_writer
         self.session = requests.Session()
         self.session.headers.update(
             {
@@ -123,6 +132,10 @@ class WeiboSuperTopicCrawler:
     def _log(self, message: str) -> None:
         if self.progress_callback:
             self.progress_callback(message)
+
+    def _emit_stage_cache(self, stage: str, posts: list[dict]) -> None:
+        if self.stage_callback:
+            self.stage_callback(stage, posts)
 
     def crawl(self, config: CrawlConfig) -> list[dict]:
         topic_id = parse_super_topic_id(config.super_topic)
@@ -226,8 +239,10 @@ class WeiboSuperTopicCrawler:
                 f"未抓到近 {config.days_window} 天帖子。可能是 Cookie 失效，或超话近 {config.days_window} 天无数据。"
             )
 
+        self._emit_stage_cache("posts_raw", all_posts)
         self._log("补全帖子正文（包含疑似截断内容）...")
         self.hydrate_full_text_posts(all_posts, max_workers=config.text_workers)
+        self._emit_stage_cache("posts_hydrated", all_posts)
 
         self._log("开始计算评分（包含评论结构估算与时间权重）...")
         self.enrich_score_fields(all_posts, config)
@@ -240,6 +255,7 @@ class WeiboSuperTopicCrawler:
             self._recalibrate_time_weight(all_posts, config)
 
         all_posts.sort(key=lambda x: float(x.get("score", 0.0)), reverse=True)
+        self._emit_stage_cache("posts_scored", all_posts)
         return all_posts
 
     def _fetch_super_index_page(self, super_index_url: str, page: int) -> str:
@@ -340,21 +356,18 @@ class WeiboSuperTopicCrawler:
         return base * _calc_time_weight(publish_dt, ref_now)
 
     def _set_estimated_score_fields(self, post: dict, config: CrawlConfig) -> None:
-        reposts = int(post.get("reposts", 0) or 0)
-        likes = int(post.get("likes", 0) or 0)
         total_comments = int(post.get("comments", 0) or 0)
         comment_factor = max(0.5, float(config.topic_comment_factor))
-        score = likes * 0.3 + total_comments * 0.5 * comment_factor + reposts * 0.1
         publish_dt = parse_publish_datetime(str(post.get("publish_time") or ""))
-        weight_now = config.window_end or datetime.now()
-        time_weight = _calc_time_weight(publish_dt, weight_now)
+        detail = calculate_score({**post, "author_replies": 0, "publish_dt": publish_dt}, config)
 
         post["non_author_comments"] = total_comments
         post["author_replies"] = 0
         post["topic_comment_factor"] = comment_factor
-        post["base_score"] = round(score, 4)
-        post["time_weight"] = round(time_weight, 4)
-        post["score"] = round(score * time_weight, 4)
+        post["base_score"] = detail.base_score
+        post["time_weight"] = detail.time_weight
+        post["score"] = detail.final_score
+        post["score_detail"] = detail.to_dict()
         post.setdefault("top_comment_1", "")
         post.setdefault("top_comment_2", "")
         post.setdefault("top_comment_3", "")
@@ -418,8 +431,6 @@ class WeiboSuperTopicCrawler:
         config: CrawlConfig,
         session: requests.Session | None = None,
     ) -> None:
-        reposts = int(post.get("reposts", 0) or 0)
-        likes = int(post.get("likes", 0) or 0)
         total_comments = int(post.get("comments", 0) or 0)
         author_id = str(post.get("author_id") or "")
         post_id = str(post.get("post_id") or "")
@@ -430,12 +441,17 @@ class WeiboSuperTopicCrawler:
         analysis_ok = total_comments <= 0
         if total_comments > 0 and post_id and author_id:
             try:
-                comment_analysis = self._analyze_comments(
-                    post_id=post_id,
-                    author_id=author_id,
-                    page_limit=min(config.comment_page_limit, max(1, math.ceil(total_comments / 20))),
-                    session=session,
-                )
+                comment_analysis = self._read_comment_cache(post_id)
+                if comment_analysis is None:
+                    comment_analysis = self._analyze_comments(
+                        post_id=post_id,
+                        author_id=author_id,
+                        page_limit=min(config.comment_page_limit, max(1, math.ceil(total_comments / 20))),
+                        session=session,
+                    )
+                    self._write_comment_cache(post_id, comment_analysis)
+                else:
+                    self._log(f"已读取评论缓存：{post_id}")
                 author_replies = int(comment_analysis.get("author_replies", 0) or 0)
                 top_comments = list(comment_analysis.get("top_comments", []) or [])
                 all_comments = list(comment_analysis.get("all_comments", []) or [])
@@ -448,24 +464,16 @@ class WeiboSuperTopicCrawler:
 
         non_author_comments = max(0, total_comments - author_replies)
         comment_factor = max(0.5, float(config.topic_comment_factor))
-        score = (
-            likes * 0.3
-            + non_author_comments * 0.5 * comment_factor
-            + author_replies * 0.2
-            + reposts * 0.1
-        )
         publish_dt = parse_publish_datetime(str(post.get("publish_time") or ""))
-        # 用统计窗口结束时间做参照，可减少“同一窗口重复跑分数漂移”
-        weight_now = config.window_end or datetime.now()
-        time_weight = _calc_time_weight(publish_dt, weight_now)
-        weighted_score = score * time_weight
+        detail = calculate_score({**post, "author_replies": author_replies, "publish_dt": publish_dt}, config)
 
         post["non_author_comments"] = non_author_comments
         post["author_replies"] = author_replies
         post["topic_comment_factor"] = comment_factor
-        post["base_score"] = round(score, 4)
-        post["time_weight"] = round(time_weight, 4)
-        post["score"] = round(weighted_score, 4)
+        post["base_score"] = detail.base_score
+        post["time_weight"] = detail.time_weight
+        post["score"] = detail.final_score
+        post["score_detail"] = detail.to_dict()
         post["top_comment_1"] = _format_comment_for_cell(top_comments[0]) if len(top_comments) >= 1 else ""
         post["top_comment_2"] = _format_comment_for_cell(top_comments[1]) if len(top_comments) >= 2 else ""
         post["top_comment_3"] = _format_comment_for_cell(top_comments[2]) if len(top_comments) >= 3 else ""
@@ -474,6 +482,30 @@ class WeiboSuperTopicCrawler:
         post["all_comments_data"] = all_comments
         post["comment_image_urls"] = " | ".join(_collect_top_comment_image_urls(top_comments))
         post["comment_analysis_done"] = analysis_ok
+
+    def _read_comment_cache(self, post_id: str) -> dict | None:
+        if not self.comment_cache_reader:
+            return None
+        try:
+            data = self.comment_cache_reader(post_id)
+        except Exception as err:
+            self._log(f"评论缓存无效，重新请求：{post_id}，{type(err).__name__}: {err}")
+            return None
+        if not isinstance(data, dict):
+            return None
+        required = {"author_replies", "top_comments", "all_comments"}
+        if not required.issubset(data):
+            self._log(f"评论缓存无效，重新请求：{post_id}")
+            return None
+        return data
+
+    def _write_comment_cache(self, post_id: str, data: dict) -> None:
+        if not self.comment_cache_writer:
+            return
+        try:
+            self.comment_cache_writer(post_id, data)
+        except Exception as err:
+            self._log(f"评论缓存写入失败：{post_id}，{type(err).__name__}: {err}")
 
     def _recalibrate_time_weight(self, posts: list[dict], config: CrawlConfig) -> None:
         rows = list(posts)
@@ -2418,10 +2450,8 @@ def select_weekly_posts(posts: Iterable[dict], limit: int = 15) -> list[dict]:
 
 
 def _should_skip_weekly_post(post: dict) -> bool:
-    if _is_video_post(post):
-        return True
-    content = _clean_text(str(post.get("content") or ""))
-    return _is_summary_post(content)
+    excluded, _reason = should_exclude_post(post)
+    return excluded
 
 
 def _is_video_post(post: dict) -> bool:

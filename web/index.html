@@ -54,15 +54,36 @@
                 <textarea id="cookie" rows="5" spellcheck="false"></textarea>
               </label>
             </div>
-            <div class="button-row cookie-actions">
-              <button id="cookieExpandBtn" type="button" class="secondary">展开编辑 Cookie</button>
-              <button id="cookieCollapseBtn" type="button" class="secondary hidden">收起 Cookie</button>
-              <button id="edgeDebugBtn" type="button" class="secondary">打开调试 Edge</button>
-              <button id="autoCookieBtn" type="button" class="secondary">自动获取 Cookie</button>
-              <button id="clipboardBtn" type="button" class="secondary">读取剪贴板</button>
-              <button id="extractCookieBtn" type="button" class="secondary">识别粘贴内容</button>
+            <div class="cookie-quick-actions">
+              <button id="cookieExpandBtn" type="button" class="secondary">展开编辑</button>
+              <button id="cookieCollapseBtn" type="button" class="secondary hidden">收起</button>
               <button id="checkCookieBtn" type="button" class="secondary">测试 Cookie</button>
               <button id="clearCookieBtn" type="button" class="secondary danger-button">清空 Cookie</button>
+            </div>
+
+            <div class="cookie-methods">
+              <section class="cookie-method-card recommended">
+                <div>
+                  <span class="cookie-action-label">推荐方式</span>
+                  <h4>调试 Edge 自动读取</h4>
+                  <p>先打开调试 Edge 并登录微博，再自动读取当前登录态。</p>
+                </div>
+                <div class="cookie-action-buttons">
+                  <button id="edgeDebugBtn" type="button" class="secondary">打开调试 Edge</button>
+                  <button id="autoCookieBtn" type="button" class="secondary">自动读取 Cookie</button>
+                </div>
+              </section>
+              <section class="cookie-method-card">
+                <div>
+                  <span class="cookie-action-label">备用方式</span>
+                  <h4>从剪贴板或粘贴内容导入</h4>
+                  <p>适合复制请求头、Cookie 字符串或 cURL 片段后手动识别。</p>
+                </div>
+                <div class="cookie-action-buttons">
+                  <button id="clipboardBtn" type="button" class="secondary">读取剪贴板</button>
+                  <button id="extractCookieBtn" type="button" class="secondary">识别粘贴内容</button>
+                </div>
+              </section>
             </div>
           </section>
 
@@ -143,6 +164,24 @@
             <button id="openResultDirBtn" type="button" class="secondary hidden">打开所在位置</button>
           </div>
           <div id="resultList" class="result-list"></div>
+          <div class="cache-tools" aria-label="缓存与重新生成">
+            <div class="field full">
+              <label for="reexportRunDir">运行目录</label>
+              <input id="reexportRunDir" type="text" placeholder="output/20260508_210000" autocomplete="off" />
+            </div>
+            <div class="export-type-row" aria-label="重新生成类型">
+              <label><input type="checkbox" name="reexportType" value="markdown" checked /> Markdown</label>
+              <label><input type="checkbox" name="reexportType" value="docx" checked /> DOCX</label>
+              <label><input type="checkbox" name="reexportType" value="excel" checked /> XLSX</label>
+              <label><input type="checkbox" name="reexportType" value="csv" checked /> CSV</label>
+              <label><input type="checkbox" name="reexportType" value="summary" checked /> Summary</label>
+            </div>
+            <div class="button-row">
+              <button id="checkCacheBtn" type="button" class="secondary">检查缓存</button>
+              <button id="reexportBtn" type="button" class="primary" disabled>重新生成报告</button>
+            </div>
+            <div id="cacheStatusBox" class="cache-status-box muted">尚未检查缓存</div>
+          </div>
         </section>
 
         <section id="logPanel" class="panel log-panel" aria-label="任务日志">

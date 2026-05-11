@@ -39,6 +39,8 @@ const controls = {
   downloadLog: $("downloadLogBtn"),
   clearLogView: $("clearLogViewBtn"),
   logBottom: $("logBottomBtn"),
+  checkCache: $("checkCacheBtn"),
+  reexport: $("reexportBtn"),
   preflightToggle: $("preflightToggleBtn"),
   preflightClose: $("preflightCloseBtn"),
   preflightCancel: $("preflightCancelBtn"),
@@ -61,6 +63,8 @@ const ui = {
   pickCount: $("pickCount"),
   resultPanel: $("resultPanel"),
   resultList: $("resultList"),
+  cacheStatusBox: $("cacheStatusBox"),
+  reexportRunDir: $("reexportRunDir"),
   previewPanel: $("previewPanel"),
   previewContent: $("previewContent"),
   previewPath: $("previewPath"),
@@ -82,7 +86,8 @@ const ui = {
   helpClose: $("helpCloseBtn"),
 };
 
-const PREFLIGHT_STORAGE_KEY = "weibo_preflight_cache_v1";
+const PREFLIGHT_SESSION_KEY = "weibo_preflight_session_v2";
+const LEGACY_PREFLIGHT_STORAGE_KEY = "weibo_preflight_cache_v1";
 
 let pollTimer = null;
 let pollFailures = 0;
@@ -106,6 +111,8 @@ let candidateExpanded = new Set();
 let preflightPendingPayload = null;
 let preflightCollapseTimer = null;
 let lastPreflight = null;
+let lastCacheStatusKey = "";
+let lastCacheCanReexport = false;
 
 function setBusy(button, busy, text) {
   if (!button) return;
@@ -932,6 +939,10 @@ function renderResult(job) {
     controls.preview.disabled = true;
     controls.openResultDir.classList.add("hidden");
     controls.openResultDir.disabled = true;
+    if (ui.cacheStatusBox) ui.cacheStatusBox.textContent = "尚未检查缓存";
+    if (controls.reexport) controls.reexport.disabled = true;
+    lastCacheStatusKey = "";
+    lastCacheCanReexport = false;
     hidePreview();
     autoPreviewResultKey = "";
     return;
@@ -943,6 +954,12 @@ function renderResult(job) {
   controls.openResultDir.classList.remove("hidden");
   controls.openResultDir.disabled = false;
   renderResultList(result);
+  if (ui.reexportRunDir && result.run_dir && ui.reexportRunDir.value !== result.run_dir) {
+    ui.reexportRunDir.value = result.run_dir;
+  }
+  if (result.run_dir && result.run_dir !== lastCacheStatusKey) {
+    checkCacheStatus({ silent: true });
+  }
 
   if (result.md && result.md !== autoPreviewResultKey) {
     autoPreviewResultKey = result.md;
@@ -957,13 +974,13 @@ function renderResultList(result) {
   const failedImageCount = Number(result.failed_image_count || manifest.failed_image_count || 0);
   const rows = [
     resultInfoRow("导出目录", result.run_dir || manifest.run_dir, true),
-    resultFileRow("Markdown 文件", files.markdown || pathToFileItem("Markdown", result.md, "preview_markdown")),
+    resultFileRow("Markdown 文件", normalizeFileItem(files.markdown, "Markdown", result.md, "preview_markdown")),
     ...arrayFileRows("DOCX 文件", files.docx || result.docx),
-    resultFileRow("总 DOCX", files.docx_sum || pathToFileItem("总 DOCX", result.docx_sum)),
-    resultFileRow("XLSX 文件", files.xlsx || pathToFileItem("XLSX", result.xlsx)),
-    resultFileRow("CSV 文件", files.csv || pathToFileItem("CSV", result.csv)),
-    resultFileRow("summary txt 文件", files.summary || pathToFileItem("summary txt", result.summary)),
-    resultFileRow("images 图片目录", files.images || pathToFileItem("images 图片目录", result.image_dir, "open_result_dir")),
+    resultFileRow("总 DOCX", normalizeFileItem(files.docx_sum, "总 DOCX", result.docx_sum)),
+    resultFileRow("XLSX 文件", normalizeFileItem(files.xlsx || files.excel, "XLSX", result.xlsx)),
+    resultFileRow("CSV 文件", normalizeFileItem(files.csv, "CSV", result.csv)),
+    resultFileRow("summary txt 文件", normalizeFileItem(files.summary, "summary txt", result.summary)),
+    resultFileRow("images 图片目录", normalizeFileItem(files.images || files.images_dir, "images 图片目录", result.image_dir, "open_result_dir")),
     failedImageCount ? resultInfoRow("失败图片数量", `${failedImageCount} 张`, false) : "",
     ...warnings.map((warning) => resultInfoRow("警告", warning, false, "warning")),
   ].filter(Boolean);
@@ -975,8 +992,16 @@ function arrayFileRows(label, value) {
   const rows = Array.isArray(value) ? value : [value];
   return rows.map((item, index) => {
     const rowLabel = rows.length > 1 ? `${label} ${index + 1}` : label;
-    return resultFileRow(rowLabel, typeof item === "string" ? pathToFileItem(rowLabel, item) : item);
+    return resultFileRow(rowLabel, normalizeFileItem(item, rowLabel));
   });
+}
+
+function normalizeFileItem(item, label, fallbackPath = "", action = "") {
+  if (!item && fallbackPath) return pathToFileItem(label, fallbackPath, action);
+  if (!item) return null;
+  if (typeof item === "string") return pathToFileItem(label, item, action);
+  if (item.path || item.relative_path || item.name) return { ...item, action: item.action || action };
+  return pathToFileItem(label, String(item), action);
 }
 
 function pathToFileItem(label, path, action = "") {
@@ -1204,12 +1229,10 @@ async function startJobAfterPreflight(payload = readForm()) {
 
 function renderPreflightInline(preflight, options = {}) {
   const checks = preflight.checks || [];
-  const { restore = false, collapsed = false } = options;
+  const { collapsed = false, restore = false } = options;
   clearTimeout(preflightCollapseTimer);
   if (!checks.length) {
-    ui.preflightPanel.classList.add("hidden");
-    lastPreflight = null;
-    clearPreflightCache();
+    resetPreflightInline();
     return;
   }
   ui.preflightPanel.classList.remove("hidden");
@@ -1224,6 +1247,22 @@ function renderPreflightInline(preflight, options = {}) {
   }
 }
 
+function resetPreflightInline() {
+  clearTimeout(preflightCollapseTimer);
+  preflightCollapseTimer = null;
+  lastPreflight = null;
+  ui.preflightPanel.classList.add("hidden");
+  ui.preflightPanel.classList.remove("collapsed");
+  ui.preflightPanel.setAttribute("aria-expanded", "false");
+  ui.preflightSummary.textContent = "";
+  ui.preflightList.innerHTML = "";
+  if (controls.preflightToggle) {
+    controls.preflightToggle.textContent = "展开";
+    controls.preflightToggle.setAttribute("aria-expanded", "false");
+  }
+  clearPreflightCache();
+}
+
 function setPreflightCollapsed(collapsed) {
   const isCollapsed = Boolean(collapsed);
   ui.preflightPanel.classList.toggle("collapsed", isCollapsed);
@@ -1235,40 +1274,69 @@ function setPreflightCollapsed(collapsed) {
   persistPreflightCache(isCollapsed);
 }
 
+function preflightFormKey(payload = readForm()) {
+  return JSON.stringify({
+    super_topic: payload.super_topic || "",
+    cookie_present: Boolean(payload.cookie),
+    cookie_length: String(payload.cookie || "").length,
+    window_start: payload.window_start || "",
+    window_end: payload.window_end || "",
+    max_pages: payload.max_pages || "",
+    topic_comment_factor: payload.topic_comment_factor || "",
+    pause_seconds: payload.pause_seconds || "",
+    output_dir: payload.output_dir || "",
+  });
+}
+
 function persistPreflightCache(collapsed) {
-  if (!lastPreflight) return;
-  const payload = {
-    preflight: lastPreflight,
-    collapsed: Boolean(collapsed),
-    saved_at: Date.now(),
-  };
+  if (!lastPreflight?.checks?.length) return;
   try {
-    localStorage.setItem(PREFLIGHT_STORAGE_KEY, JSON.stringify(payload));
+    sessionStorage.setItem(
+      PREFLIGHT_SESSION_KEY,
+      JSON.stringify({
+        preflight: lastPreflight,
+        collapsed: Boolean(collapsed),
+        form_key: preflightFormKey(),
+        saved_at: Date.now(),
+      }),
+    );
   } catch (err) {
-    // Ignore storage failures (e.g., private mode).
+    // Ignore storage failures.
   }
 }
 
 function clearPreflightCache() {
   try {
-    localStorage.removeItem(PREFLIGHT_STORAGE_KEY);
+    sessionStorage.removeItem(PREFLIGHT_SESSION_KEY);
+    localStorage.removeItem(LEGACY_PREFLIGHT_STORAGE_KEY);
+  } catch (err) {
+    // Ignore storage failures.
+  }
+}
+
+function clearLegacyPreflightCache() {
+  try {
+    localStorage.removeItem(LEGACY_PREFLIGHT_STORAGE_KEY);
   } catch (err) {
     // Ignore storage failures.
   }
 }
 
 function restorePreflightCache() {
+  clearLegacyPreflightCache();
   let cached = null;
   try {
-    cached = JSON.parse(localStorage.getItem(PREFLIGHT_STORAGE_KEY) || "null");
+    cached = JSON.parse(sessionStorage.getItem(PREFLIGHT_SESSION_KEY) || "null");
   } catch (err) {
-    return;
+    clearPreflightCache();
+    return false;
   }
-  if (!cached?.preflight?.checks?.length) return;
+  if (!cached?.preflight?.checks?.length) return false;
   renderPreflightInline(cached.preflight, {
-    restore: true,
     collapsed: Boolean(cached.collapsed),
+    restore: true,
   });
+  return true;
 }
 
 function showPreflightModal(preflight, canProceed, payload) {
@@ -1336,6 +1404,7 @@ async function autoCookie() {
     fields.cookie.value = data.cookie || "";
     setCookieValidationState("unverified");
     updateCookieSummary();
+    resetPreflightInline();
     await saveConfigNow();
     showToast(data.debug_edge_closed ? "Cookie 自动读取成功，调试 Edge 已关闭。" : "Cookie 自动读取成功。");
   } catch (err) {
@@ -1351,6 +1420,7 @@ async function readClipboard() {
     fields.cookie.value = text || "";
     setCookieValidationState("unverified");
     updateCookieSummary();
+    resetPreflightInline();
     scheduleConfigSave();
     showToast("剪贴板内容已填入 Cookie 文本框。", "info");
   } catch (err) {
@@ -1368,6 +1438,7 @@ async function extractCookie() {
     fields.cookie.value = data.cookie || "";
     setCookieValidationState("unverified");
     updateCookieSummary();
+    resetPreflightInline();
     await saveConfigNow();
     showToast("已从粘贴内容中识别 Cookie。", "info");
   } catch (err) {
@@ -1407,6 +1478,7 @@ async function clearCookie() {
     fields.cookie.value = "";
     setCookieValidationState("unverified");
     updateCookieSummary();
+    resetPreflightInline();
     await api("/api/clear-config", {
       method: "POST",
       body: JSON.stringify({ scope: "cookie" }),
@@ -1526,6 +1598,95 @@ async function openResultDir() {
   } finally {
     setBusy(controls.openResultDir, false);
   }
+}
+
+async function checkCacheStatus(options = {}) {
+  const runDir = (ui.reexportRunDir?.value || "").trim();
+  if (!runDir) {
+    if (!options.silent) showToast("请先填写运行目录。", "warning");
+    return null;
+  }
+  if (!options.silent) setBusy(controls.checkCache, true, "正在检查");
+  try {
+    const response = await api("/api/cache-status", {
+      method: "POST",
+      body: JSON.stringify({ run_dir: runDir }),
+    });
+    const data = response.data || response;
+    lastCacheStatusKey = runDir;
+    lastCacheCanReexport = Boolean(data.can_reexport);
+    renderCacheStatus(data);
+    controls.reexport.disabled = !lastCacheCanReexport;
+    if (!options.silent) {
+      showToast(lastCacheCanReexport ? "缓存完整，可以重新生成报告。" : "缓存不完整，无法重新生成。", lastCacheCanReexport ? "success" : "warning");
+    }
+    return data;
+  } catch (err) {
+    lastCacheCanReexport = false;
+    controls.reexport.disabled = true;
+    renderCacheStatus({ has_cache: false, can_reexport: false, missing: [err.message], files: {} });
+    if (!options.silent) appendClientLog(err.message);
+    return null;
+  } finally {
+    if (!options.silent) setBusy(controls.checkCache, false);
+  }
+}
+
+async function reexportReport() {
+  const runDir = (ui.reexportRunDir?.value || "").trim();
+  if (!runDir) {
+    showToast("请先填写运行目录。", "warning");
+    return;
+  }
+  setBusy(controls.reexport, true, "正在生成");
+  try {
+    const response = await api("/api/reexport", {
+      method: "POST",
+      body: JSON.stringify({
+        run_dir: runDir,
+        selected_post_ids: null,
+        export_types: selectedReexportTypes(),
+      }),
+    });
+    const data = response.data || response;
+    showToast(data.message || "重新生成完成。", "success");
+    if (data.result) {
+      renderResultList(data.result);
+      if (data.result.run_dir) ui.reexportRunDir.value = data.result.run_dir;
+    }
+    await checkCacheStatus({ silent: true });
+  } catch (err) {
+    appendClientLog(err.message);
+  } finally {
+    setBusy(controls.reexport, false);
+    controls.reexport.disabled = !lastCacheCanReexport;
+  }
+}
+
+function selectedReexportTypes() {
+  return Array.from(document.querySelectorAll("input[name='reexportType']:checked")).map((item) => item.value);
+}
+
+function renderCacheStatus(status) {
+  if (!ui.cacheStatusBox) return;
+  const files = status.files || {};
+  const rows = [
+    cacheStatusLine("cache/ 文件夹", Boolean(status.has_cache)),
+    cacheStatusLine("原始帖子缓存", Boolean(files.posts_raw)),
+    cacheStatusLine("正文补全缓存", Boolean(files.posts_hydrated)),
+    cacheStatusLine("评分缓存", Boolean(files.posts_scored)),
+    cacheStatusLine("候选缓存", Boolean(files.candidates)),
+    cacheStatusLine("人工选择缓存", Boolean(files.selected_posts)),
+    cacheStatusLine(`评论缓存 ${Number(status.comments_count || 0)} 个`, Number(status.comments_count || 0) > 0),
+    cacheStatusLine("图片清单", Boolean(files.images_manifest)),
+    cacheStatusLine("可重新生成报告", Boolean(status.can_reexport)),
+  ];
+  const missing = (status.missing || []).map((item) => `<div class="cache-status-line missing"><span>缺少</span><strong>${escapeHtml(item)}</strong></div>`);
+  ui.cacheStatusBox.innerHTML = [...rows, ...missing].join("");
+}
+
+function cacheStatusLine(label, ok) {
+  return `<div class="cache-status-line ${ok ? "ok" : "missing"}"><span>${ok ? "✓" : "✗"} ${escapeHtml(label)}</span><strong>${ok ? "是" : "否"}</strong></div>`;
 }
 
 async function loadMarkdownPreview(options = {}) {
@@ -1895,6 +2056,14 @@ controls.candidateSort.addEventListener("change", () => renderCandidates(current
 ui.candidateList.addEventListener("change", handleCandidateChange);
 ui.candidateList.addEventListener("click", handleCandidateClick);
 controls.openResultDir.addEventListener("click", openResultDir);
+controls.checkCache.addEventListener("click", () => checkCacheStatus());
+controls.reexport.addEventListener("click", reexportReport);
+ui.reexportRunDir.addEventListener("input", () => {
+  lastCacheStatusKey = "";
+  lastCacheCanReexport = false;
+  controls.reexport.disabled = true;
+  ui.cacheStatusBox.textContent = "运行目录已修改，请重新检查缓存";
+});
 ui.resultList.addEventListener("click", handleResultClick);
 controls.preview.addEventListener("click", () => {
   if (ui.previewPanel.getAttribute("aria-hidden") === "true") {
@@ -1970,6 +2139,7 @@ document.addEventListener("visibilitychange", () => {
       setCookieValidationState("unverified");
       updateCookieSummary();
     }
+    resetPreflightInline();
     scheduleConfigSave();
   });
 });

@@ -188,3 +188,113 @@ images/
 - 请合理设置请求间隔，避免高频请求。
 - 请遵守微博平台规则和相关法律法规。
 - `output/`、`.venv/`、`__pycache__/` 等目录已在 `.gitignore` 中忽略，不建议提交到 GitHub。
+
+## 开发说明
+
+本工具只建议在本机 `127.0.0.1` 使用，不建议部署到公网。后端仍使用 Python 标准库 HTTP 服务，没有引入 FastAPI、Flask 或大型前端框架。
+
+### 模块结构
+
+```text
+app.py                 # 启动入口：参数解析、创建本地服务、打开浏览器
+server/
+  http_server.py       # ThreadingHTTPServer 创建逻辑
+  handlers.py          # WebUI/API 路由和请求处理
+  responses.py         # JSON/静态文件响应工具
+core/
+  config.py            # 配置读写、迁移、预检查参数校验、CrawlConfig 构造
+  job.py               # CrawlJob、结构化进度、事件、取消和人工筛选协调
+  events.py            # JobEvent、阶段定义、日志级别推断
+  paths.py             # 路径安全、目录创建、文件名清理
+  errors.py            # 后端统一错误类型
+modules/
+  crawler_scoring.py   # 评分明细与基础评分计算
+  crawler_filters.py   # 视频帖、汇总帖、导航帖过滤判断
+  crawler_client.py    # 轻量微博请求封装与 Cookie 检测
+export/
+  context.py           # 导出上下文
+  manifest.py          # manifest.json 生成与写入
+crawler.py             # 兼容入口，仍保留主要抓取、解析和导出实现
+tests/                 # 标准库 unittest 测试
+```
+
+`crawler.py` 暂时仍保留 HTML 解析、长正文补全、评论分析、图片下载和 DOCX/XLSX/CSV/Markdown 具体导出函数。这些逻辑耦合较深，后续应按小步迁移到 `modules/` 与 `export/`，避免一次性重写导致抓取流程回归。
+
+### 本地启动
+
+```powershell
+.\.venv\Scripts\python app.py
+.\.venv\Scripts\python app.py --no-browser
+.\.venv\Scripts\python app.py --host 127.0.0.1 --port 8765
+```
+
+### 运行测试
+
+测试使用标准库 `unittest`，不依赖真实微博网络或真实 Cookie：
+
+```powershell
+.\.venv\Scripts\python -m unittest discover -s tests
+```
+
+### 主要 API
+
+- `GET /api/defaults`：读取页面默认配置。
+- `POST /api/config`：保存页面配置。
+- `POST /api/preflight`：开始前预检查。
+- `POST /api/check-cookie`：轻量检测 Cookie 登录态。
+- `POST /api/start`：启动抓取任务。
+- `GET /api/status`：返回结构化任务状态、阶段、进度、事件、候选和导出结果。
+- `POST /api/select`：提交人工筛选结果。
+- `POST /api/cancel-job`：请求取消当前任务。
+- `GET /api/report-preview`：读取 Markdown 周报预览。
+- `POST /api/open-result-dir`：打开本地导出目录。
+
+### 配置文件
+
+`weibo_stats_config.json` 当前使用 `version=2` 的扁平结构，保存超话、Cookie、导出目录、主题和高级模式等本地设置。旧配置会在读取时自动迁移；`scope=cookie` 清空时只清 Cookie，`scope=all` 会备份旧配置为 `weibo_stats_config.backup.json` 后恢复默认值。
+
+### manifest.json
+
+每次导出完成后，时间戳目录会生成 `manifest.json`，记录导出目录、Markdown、DOCX、XLSX、CSV、summary、images、警告信息和失败图片数量。WebUI 的“导出结果清单”优先读取任务结果中的 manifest 数据。
+
+## 本地缓存与重新生成报告
+
+每次任务会在运行目录中创建 `cache/`，用于保存中间结果。缓存只用于本地离线重新生成报告，不会写入 Cookie、Authorization、token、session、password、secret 等登录凭据或会话字段。
+
+典型结构：
+
+```text
+output/20260508_210000/
+  manifest.json
+  cache/
+    run_config.json          # 本次运行的非敏感配置
+    posts_raw.json           # 翻页抓取后的原始帖子
+    posts_hydrated.json      # 正文补全后的帖子
+    posts_scored.json        # 评论分析和评分后的帖子
+    candidates.json          # 自动生成的候选帖子
+    selected_posts.json      # 人工最终选择的帖子
+    community_stats.json     # 统计摘要、活跃时段、评论榜单
+    images_manifest.json     # 图片下载成功/失败清单
+    comments/
+      post_123456.json       # 单帖评论分析缓存
+```
+
+如果 Word/Excel 文件被占用、导出失败，或修改了报告样式，只要 `cache/` 完整，就可以在 WebUI 的“导出结果”区域填写运行目录，点击“检查缓存”，再点击“重新生成报告”。重新生成只读取本地 JSON 缓存，不会重新请求微博、不重新抓取评论、不重新下载图片。
+
+重新生成会默认覆盖这些项目生成文件：
+
+- `warma_weekly_report.md`
+- `weibo_posts.xlsx`
+- `weibo_posts.csv`
+- `weibo_summary.txt`
+- `warma_weekly_report*.docx`
+- `weekly_report_sum.docx`
+
+它只删除符合项目命名规则的旧 DOCX，不会删除用户手动放入目录的其他文件。如果写入失败，请先关闭正在打开的 Word/Excel 文件后重试。
+
+缓存缺失时，WebUI 会列出缺少的文件。例如缺少 `selected_posts.json` 或 `posts_scored.json` 时，无法离线重新生成，需要重新完成一次完整任务或选择包含完整 `cache/` 的运行目录。少量图片缺失不会阻止重新生成，系统会记录 warning 并继续生成报告。
+
+新增本地 API：
+
+- `POST /api/cache-status`：检查运行目录的缓存完整性。
+- `POST /api/reexport`：基于已有 `cache/` 离线重新生成报告。

@@ -620,12 +620,77 @@ h2 {
   white-space: pre-wrap;
 }
 
-.cookie-actions {
-  margin-bottom: 0;
-}
-
 .danger-button {
   color: var(--danger);
+}
+
+.cookie-quick-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.cookie-methods {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.cookie-method-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.055);
+}
+
+.cookie-method-card.recommended {
+  border-color: rgba(123, 216, 143, 0.28);
+  background: rgba(123, 216, 143, 0.075);
+}
+
+.cookie-action-label {
+  display: inline-flex;
+  align-items: center;
+  width: max-content;
+  min-height: 22px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 7px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.cookie-method-card h4 {
+  margin: 8px 0 4px;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.cookie-method-card p {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.cookie-action-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.cookie-action-buttons button,
+.cookie-quick-actions button {
+  min-height: 34px;
 }
 
 .advanced-fields {
@@ -677,7 +742,7 @@ h2 {
 }
 
 .preflight-inline > .check-list {
-  max-height: 520px;
+  max-height: 1400px;
   overflow: hidden;
   opacity: 1;
   transition:
@@ -1268,6 +1333,51 @@ h2 {
   background: rgba(255, 209, 102, 0.08);
 }
 
+.cache-tools {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  border-top: 1px solid var(--glass-border);
+  padding-top: 14px;
+}
+
+.export-type-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  color: var(--muted);
+}
+
+.export-type-row label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.cache-status-box {
+  display: grid;
+  gap: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 7px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.cache-status-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.cache-status-line.ok {
+  color: var(--success);
+}
+
+.cache-status-line.missing {
+  color: var(--danger);
+}
+
 .file-row.missing {
   opacity: 0.78;
 }
@@ -1654,6 +1764,7 @@ body.light-theme .field select:focus {
 body.light-theme .progress-item,
 body.light-theme .candidate,
 body.light-theme .cookie-panel,
+body.light-theme .cookie-method-card,
 body.light-theme .preflight-inline,
 body.light-theme .check-item,
 body.light-theme .result-row {
@@ -1805,6 +1916,8 @@ body.light-theme .preflight-dialog {
   .candidate-actions button,
   .topbar-actions button,
   .button-row.end button,
+  .cookie-quick-actions button,
+  .cookie-action-buttons button,
   .log-tools button,
   .log-tools input,
   .log-tools select,
@@ -1821,6 +1934,10 @@ body.light-theme .preflight-dialog {
 
   .candidate,
   .backend-log-line {
+    grid-template-columns: 1fr;
+  }
+
+  .cookie-methods {
     grid-template-columns: 1fr;
   }
 
