@@ -41,6 +41,8 @@ def build_manifest(
         "updated_at": now,
         "tool": "weibo_super_stats",
         "super_topic": super_topic,
+        "super_topic_name": str(config.get("super_topic_name") or ""),
+        "report_title": str(config.get("report_title") or ""),
         "super_topic_id": str(config.get("super_topic_id") or parse_super_topic_id(super_topic) or ""),
         "window_start": str(config.get("window_start") or ""),
         "window_end": str(config.get("window_end") or ""),
@@ -97,4 +99,3 @@ def _rel(run_dir: Path, raw_path: Any) -> str | None:
     except Exception:
         return text.replace("\\", "/")
     return text.replace("\\", "/")
-

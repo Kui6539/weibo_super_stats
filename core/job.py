@@ -27,6 +27,7 @@ from crawler import (
     CrawlError,
     WeiboSuperTopicCrawler,
     analyze_active_period,
+    build_report_title,
     build_comment_leaderboards,
     build_summary,
     download_post_images,
@@ -222,6 +223,8 @@ class CrawlJob:
         self.error: str | None = None
         self.selected_indexes: list[int] | None = None
         self.cancel_requested = threading.Event()
+        self.super_topic_name = ""
+        self.report_title = build_report_title("", self.cfg.super_topic)
 
         self._candidate_posts: list[dict] = []
         self._lock = threading.RLock()
@@ -652,6 +655,9 @@ class CrawlJob:
                 comment_cache_writer=cache_store.write_comment_cache,
             )
             posts_all = crawler.crawl(self.cfg)
+            self.super_topic_name = crawler.topic_name
+            self.report_title = crawler.report_title or build_report_title(self.super_topic_name, self.cfg.super_topic)
+            self._write_cache_stage(cache_store, "run_config", self._run_config_payload(run_dir), critical=True)
             self.check_cancelled()
             self._write_cache_stage(cache_store, "posts_scored", posts_all)
             self.update_progress(
@@ -741,6 +747,7 @@ class CrawlJob:
             failed_image_count = max(0, expected_image_count - downloaded_image_count)
             images_manifest = build_images_manifest(run_dir, selected_posts)
             self._write_cache_stage(cache_store, "images_manifest", images_manifest)
+            self._write_cache_stage(cache_store, "selected_posts", selected_posts, critical=True)
             self.update_progress(
                 current=image_total,
                 total=image_total,
@@ -769,9 +776,9 @@ class CrawlJob:
             xlsx_path = run_dir / "weibo_posts.xlsx"
             csv_path = run_dir / "weibo_posts.csv"
             txt_path = run_dir / "weibo_summary.txt"
-            report_docx_path = run_dir / "warma_weekly_report.docx"
+            report_docx_path = run_dir / "weekly_report.docx"
             report_sum_docx_path = run_dir / "weekly_report_sum.docx"
-            report_md_path = run_dir / "warma_weekly_report.md"
+            report_md_path = run_dir / "weekly_report.md"
 
             self.check_cancelled()
             export_posts_xlsx(selected_posts, xlsx_path)
@@ -796,6 +803,7 @@ class CrawlJob:
             report_docx_paths = export_weekly_report_docx(
                 selected_posts,
                 report_docx_path,
+                title=self.report_title,
                 leaderboards=leaderboards,
                 preselected=True,
             )
@@ -805,13 +813,20 @@ class CrawlJob:
             report_sum_docx = export_weekly_report_sum_docx(
                 selected_posts,
                 report_sum_docx_path,
+                title=self.report_title,
                 leaderboards=leaderboards,
                 preselected=True,
             )
             export_current += 1
             self._mark_export_result("总 DOCX", report_sum_docx, export_current, export_total)
             self.check_cancelled()
-            export_weekly_report_md(selected_posts, report_md_path, leaderboards=leaderboards, preselected=True)
+            export_weekly_report_md(
+                selected_posts,
+                report_md_path,
+                title=self.report_title,
+                leaderboards=leaderboards,
+                preselected=True,
+            )
             export_current += 1
             self._mark_export_result("Markdown", report_md_path, export_current, export_total)
 
@@ -887,6 +902,8 @@ class CrawlJob:
                 "run_id": run_dir.name,
                 "created_at": self.started_at.strftime("%Y-%m-%d %H:%M:%S"),
                 "super_topic": self.cfg.super_topic,
+                "super_topic_name": self.super_topic_name,
+                "report_title": self.report_title,
                 "super_topic_id": parse_super_topic_id(self.cfg.super_topic) or "",
                 "max_pages": self.cfg.max_pages,
                 "pause_seconds": self.cfg.pause_seconds,

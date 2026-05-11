@@ -1,6 +1,5 @@
 ﻿from __future__ import annotations
 
-import csv
 import hashlib
 import heapq
 import json
@@ -32,15 +31,34 @@ from openpyxl.styles import Alignment, Font
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
+from export.csv_exporter import build_export_row as _export_build_row
+from export.csv_exporter import export_posts_csv as _export_posts_csv
+from export.markdown_exporter import export_weekly_report_md as _export_weekly_report_md
+from export.summary_exporter import build_summary as _export_build_summary
+from export.summary_exporter import calc_date_distribution_fit as _export_calc_date_distribution_fit
+from export.summary_exporter import write_summary_txt as _export_write_summary_txt
 from modules.crawler_filters import should_exclude_post
 from modules.crawler_scoring import calculate_score
+from modules.text_cleaning import clean_topic_tags, collapse_blank_lines, normalize_weibo_text, strip_html_text
+from modules.time_utils import normalize_date as _normalize_date
+from modules.time_utils import parse_weibo_time
+from modules.weibo_url import normalize_image_url, parse_super_topic_id as _parse_super_topic_id, to_absolute_url
 
-SUPER_TOPIC_ID_PATTERN = re.compile(r"/p/([0-9a-fA-F]+)")
 FM_VIEW_MARKER = "FM.view("
 COMMENTS_API_URL = "https://weibo.com/ajax/statuses/buildComments"
 COMMENT_ANALYSIS_MIN_ROWS = 60
 COMMENT_ANALYSIS_RATIO = 0.36
 FINAL_COMMENT_ANALYSIS_LIMIT = 45
+FORWARDED_NODE_TYPES = {
+    "feed_list_forwardContent",
+    "feed_list_forwardContent_full",
+}
+FORWARDED_CLASS_NAMES = {
+    "WB_feed_expand",
+    "WB_feed_expand_v2",
+    "WB_expand",
+    "WB_feed_expand_media",
+}
 EXPORT_COLUMN_MAP = [
     ("user_name", "作者昵称"),
     ("publish_time", "帖子发送时间"),
@@ -114,6 +132,8 @@ class WeiboSuperTopicCrawler:
         self.stage_callback = stage_callback
         self.comment_cache_reader = comment_cache_reader
         self.comment_cache_writer = comment_cache_writer
+        self.topic_name = ""
+        self.report_title = "微博超话周报"
         self.session = requests.Session()
         self.session.headers.update(
             {
@@ -175,6 +195,11 @@ class WeiboSuperTopicCrawler:
         for page in range(1, config.max_pages + 1):
             self._log(f"抓取第 {page} 页...")
             page_html = self._fetch_super_index_page(referer, page)
+            if not self.topic_name:
+                self.topic_name = extract_super_topic_name(page_html, config.super_topic)
+                self.report_title = build_report_title(self.topic_name, config.super_topic)
+                if self.topic_name:
+                    self._log(f"已识别超话名称：{self.topic_name}")
             feed_html = extract_feed_html_from_page(page_html)
             page_posts = parse_posts_from_html(feed_html)
             if not page_posts:
@@ -872,13 +897,57 @@ class WeiboSuperTopicCrawler:
 
 
 def parse_super_topic_id(input_text: str) -> str | None:
-    raw = input_text.strip()
-    if raw.startswith("100808") and "/" not in raw:
-        return raw
-    match = SUPER_TOPIC_ID_PATTERN.search(raw)
-    if match:
-        return match.group(1)
-    return None
+    return _parse_super_topic_id(input_text)
+
+
+def build_report_title(topic_name: str | None = None, super_topic: str | None = None) -> str:
+    name = normalize_super_topic_name(topic_name or "")
+    if not name:
+        name = normalize_super_topic_name(str(super_topic or ""))
+    return f"{name or '微博'}超话周报"
+
+
+def normalize_super_topic_name(value: str) -> str:
+    raw = _clean_text(str(value or ""))
+    if not raw:
+        return ""
+    raw = raw.strip().strip("#")
+    raw = re.sub(r"^https?://\S+$", "", raw, flags=re.I)
+    raw = re.sub(r"^100808[0-9a-fA-F]+$", "", raw)
+    raw = re.sub(r"\s*[-_｜|].*$", "", raw)
+    raw = re.sub(r"(?:微博)?超话(?:社区|详情|首页|主页)?$", "", raw)
+    raw = re.sub(r"(?:的)?微博(?:主页)?$", "", raw)
+    raw = raw.strip(" #　-—_｜|：:")
+    if not raw or raw.lower() in {"weibo", "m.weibo.cn", "weibo.com"}:
+        return ""
+    return raw[:40]
+
+
+def extract_super_topic_name(page_html: str, fallback: str | None = None) -> str:
+    html = str(page_html or "")
+    candidates: list[str] = []
+
+    title_match = re.search(r"<title[^>]*>(.*?)</title>", html, flags=re.I | re.S)
+    if title_match:
+        candidates.append(_html_to_text(title_match.group(1)))
+
+    for pattern in (
+        r'<meta[^>]+(?:property|name)=["\'](?:og:title|keywords|description)["\'][^>]+content=["\']([^"\']+)["\']',
+        r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+(?:property|name)=["\'](?:og:title|keywords|description)["\']',
+    ):
+        candidates.extend(_html_to_text(match.group(1)) for match in re.finditer(pattern, html, flags=re.I | re.S))
+
+    topic_match = re.search(r"#?\s*([^#<>{}\"'，,。；;｜|]{1,40}?)\s*超话", html)
+    if topic_match:
+        candidates.append(topic_match.group(1))
+
+    candidates.append(str(fallback or ""))
+
+    for candidate in candidates:
+        name = normalize_super_topic_name(candidate)
+        if name:
+            return name
+    return ""
 
 
 def extract_feed_html_from_page(page_html: str) -> str:
@@ -973,7 +1042,7 @@ def parse_posts_from_html(html: str) -> list[dict]:
         soup = BeautifulSoup(html, "lxml")
     except Exception:
         soup = BeautifulSoup(html, "html.parser")
-    items = soup.select("div[action-type='feed_list_item']")
+    items = [item for item in soup.select("div[action-type='feed_list_item']") if not _is_nested_feed_item(item)]
     posts: list[dict] = []
     for item in items:
         post_id = item.get("mid") or item.get("data-mid") or ""
@@ -1032,6 +1101,8 @@ def _extract_full_text_from_detail_html(page_html: str) -> str:
     texts: list[str] = []
     for selector in selectors:
         for node in soup.select(selector):
+            if _is_inside_forwarded_content(node):
+                continue
             text = _clean_text_preserve(node.get_text("\n", strip=True))
             if text and "微博社区公约" not in text:
                 texts.append(text)
@@ -1054,35 +1125,7 @@ def _extract_text_raw_from_page_blob(page_html: str) -> str:
 
 
 def parse_publish_datetime(text: str) -> datetime | None:
-    raw = _clean_text(text)
-    if not raw:
-        return None
-    now = datetime.now()
-
-    for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S", "%Y/%m/%d %H:%M", "%Y-%m-%d"):
-        parsed = _parse_publish_datetime_with_format(raw, fmt)
-        if parsed is not None:
-            return parsed
-
-    m = re.search(r"(\d{1,2})月(\d{1,2})日(?:\s+(\d{1,2}):(\d{1,2}))?", raw)
-    if m:
-        month, day = int(m.group(1)), int(m.group(2))
-        hh = int(m.group(3) or 0)
-        mm = int(m.group(4) or 0)
-        return datetime(now.year, month, day, hh, mm)
-
-    m = re.search(r"今天\s*(\d{1,2}):(\d{1,2})", raw)
-    if m:
-        return datetime(now.year, now.month, now.day, int(m.group(1)), int(m.group(2)))
-
-    m = re.search(r"昨天\s*(\d{1,2}):(\d{1,2})", raw)
-    if m:
-        d = now - timedelta(days=1)
-        return datetime(d.year, d.month, d.day, int(m.group(1)), int(m.group(2)))
-
-    if any(x in raw for x in ("分钟前", "秒前", "小时前")):
-        return now
-    return None
+    return parse_weibo_time(text)
 
 
 def _parse_publish_datetime_with_format(raw: str, fmt: str) -> datetime | None:
@@ -1190,14 +1233,7 @@ def _remove_expand_hint_preserve(text: str) -> str:
 
 
 def export_posts_csv(posts: Iterable[dict], csv_path: Path) -> None:
-    csv_path.parent.mkdir(parents=True, exist_ok=True)
-    headers = [cn for _, cn in EXPORT_COLUMN_MAP]
-    with csv_path.open("w", newline="", encoding="utf-8-sig") as f:
-        writer = csv.DictWriter(f, fieldnames=headers)
-        writer.writeheader()
-        for post in posts:
-            row = _build_export_row(post)
-            writer.writerow(row)
+    _export_posts_csv(posts, csv_path, EXPORT_COLUMN_MAP)
 
 
 def export_posts_xlsx(posts: Iterable[dict], xlsx_path: Path) -> None:
@@ -1261,7 +1297,7 @@ def export_posts_xlsx(posts: Iterable[dict], xlsx_path: Path) -> None:
 
 
 def _build_export_row(post: dict) -> dict:
-    return {cn: post.get(en, "") for en, cn in EXPORT_COLUMN_MAP}
+    return _export_build_row(post, EXPORT_COLUMN_MAP)
 
 
 def build_comment_leaderboards(posts: Iterable[dict], top_n: int = 3) -> dict:
@@ -1396,7 +1432,7 @@ def _format_leaderboard_line(
 def export_weekly_report_docx(
     posts: Iterable[dict],
     docx_path: Path,
-    title: str = "warma超话周报",
+    title: str = "微博超话周报",
     leaderboards: dict | None = None,
     preselected: bool = False,
     max_bytes: int = DOCX_SIZE_LIMIT_BYTES,
@@ -1460,7 +1496,7 @@ def export_weekly_report_docx(
 def export_weekly_report_sum_docx(
     posts: Iterable[dict],
     docx_path: Path,
-    title: str = "warma超话周报",
+    title: str = "微博超话周报",
     leaderboards: dict | None = None,
     preselected: bool = False,
 ) -> Path:
@@ -1690,85 +1726,17 @@ def _add_scaled_right_aligned_picture(doc: DocxDocument, image_path: str, scale:
 def export_weekly_report_md(
     posts: Iterable[dict],
     md_path: Path,
-    title: str = "warma超话周报",
+    title: str = "微博超话周报",
     leaderboards: dict | None = None,
     preselected: bool = False,
 ) -> None:
-    all_posts = list(posts)
-    rows = all_posts[:15] if preselected else _select_weekly_posts(all_posts, limit=15)
-    board = leaderboards or build_comment_leaderboards(all_posts, top_n=3)
-    md_path.parent.mkdir(parents=True, exist_ok=True)
-    date_range_text = _format_posts_date_range(rows)
-
-    lines: list[str] = []
-    lines.append(f"# {title}")
-    lines.append("")
-    lines.append(f"> 帖子选取日期：{date_range_text}")
-    lines.append("")
-    lines.append("## 本周社区互动榜")
-    lines.append("")
-    lines.append("### 评论数量榜 Top3")
-    count_rows = list(board.get("comment_count_top3") or [])
-    if count_rows:
-        lines.extend(
-            (
-                f"- {_format_leaderboard_line(item, include_hot=False, include_quality=False, include_like_total=False, include_post_span=True)}"
-            )
-            for item in count_rows
-        )
-    else:
-        lines.append("- 暂无评论数据")
-    lines.append("")
-    lines.append("### 评论质量榜 Top3")
-    quality_rows = list(board.get("comment_quality_top3") or [])
-    if quality_rows:
-        lines.extend(
-            f"- {_format_leaderboard_line(item, include_hot=True, include_quality=False)}"
-            for item in quality_rows
-        )
-    else:
-        lines.append("- 暂无评论数据")
-    lines.append("")
-    lines.append("## 本周热帖Top15")
-    lines.append("")
-
-    md_dir = md_path.parent
-    for post in rows:
-        author = _clean_text(str(post.get("user_name", "") or "未知作者"))
-        content = _clean_report_text(str(post.get("content", "") or ""))
-        publish_time = _clean_text(str(post.get("publish_time", "") or ""))
-        post_url = _clean_text(str(post.get("post_url", "") or ""))
-
-        lines.append(f"**@{author}**：{content}")
-        lines.append("")
-        lines.append(f"- 发送时间：{publish_time}")
-        lines.append("")
-
-        image_paths = _split_multi_urls(str(post.get("image_local_paths") or ""), sep="|")
-        for img_path in image_paths:
-            rel = _to_rel_path(md_dir, Path(img_path))
-            lines.append(f"![帖子图片]({rel})")
-            lines.append("")
-
-        comments = _iter_report_comments(post)
-        if comments:
-            lines.append("<sub>热评</sub>")
-            lines.append("")
-            for c in comments:
-                c_simple = _clean_report_text(_format_hot_comment_text(c))
-                if c_simple:
-                    lines.append(f"<sub>{c_simple}</sub>")
-                    lines.append("")
-                for c_img in _split_multi_urls(str(c.get("image_local_paths") or ""), sep="|"):
-                    rel = _to_rel_path(md_dir, Path(c_img))
-                    lines.append(f"![热评图片]({rel})")
-                    lines.append("")
-
-        lines.append(f"[帖子链接]({post_url})")
-        lines.append("")
-        lines.append("")
-
-    md_path.write_text("\n".join(lines), encoding="utf-8")
+    _export_weekly_report_md(
+        posts,
+        md_path,
+        title=title,
+        leaderboards=leaderboards,
+        preselected=preselected,
+    )
 
 
 def download_post_images(
@@ -1910,48 +1878,7 @@ def download_post_images(
 
 
 def build_summary(posts: Iterable[dict]) -> dict:
-    rows = list(posts)
-    if not rows:
-        return {
-            "total_posts": 0,
-            "sum_reposts": 0,
-            "sum_comments": 0,
-            "sum_likes": 0,
-            "sum_engagement": 0,
-            "sum_score": 0.0,
-            "avg_engagement_per_post": 0.0,
-            "avg_score_per_post": 0.0,
-            "posts_by_date": {},
-        }
-
-    sum_reposts = 0
-    sum_comments = 0
-    sum_likes = 0
-    sum_engagement = 0
-    sum_score_raw = 0.0
-    daily_counter: Counter[str] = Counter()
-    for row in rows:
-        sum_reposts += int(row.get("reposts", 0) or 0)
-        sum_comments += int(row.get("comments", 0) or 0)
-        sum_likes += int(row.get("likes", 0) or 0)
-        sum_engagement += int(row.get("engagement_total", 0) or 0)
-        sum_score_raw += float(row.get("score", 0.0) or 0.0)
-        publish_time = str(row.get("publish_time", "")).strip()
-        date_key = normalize_date(publish_time) or "未知日期"
-        daily_counter[date_key] += 1
-
-    sum_score = round(sum_score_raw, 4)
-    return {
-        "total_posts": len(rows),
-        "sum_reposts": sum_reposts,
-        "sum_comments": sum_comments,
-        "sum_likes": sum_likes,
-        "sum_engagement": sum_engagement,
-        "sum_score": sum_score,
-        "avg_engagement_per_post": round(sum_engagement / len(rows), 2),
-        "avg_score_per_post": round(sum_score / len(rows), 4),
-        "posts_by_date": dict(sorted(daily_counter.items())),
-    }
+    return _export_build_summary(posts)
 
 
 def analyze_active_period(posts: Iterable[dict]) -> dict:
@@ -2009,168 +1936,26 @@ def write_summary_txt(
     all_posts_summary: dict | None = None,
     carryover_hours: int = 0,
 ) -> None:
-    lines = [
-        f"入选帖子数(导出): {summary['total_posts']}",
-        f"入选总转发: {summary['sum_reposts']}",
-        f"入选总评论: {summary['sum_comments']}",
-        f"入选总点赞: {summary['sum_likes']}",
-        f"入选总互动量: {summary['sum_engagement']}",
-        f"入选总分数: {summary['sum_score']}",
-        f"入选平均每帖互动量: {summary['avg_engagement_per_post']}",
-        f"入选平均每帖分数: {summary['avg_score_per_post']}",
-    ]
-    carryover = max(0, int(carryover_hours or 0))
-    if carryover > 0:
-        lines.append(f"统计保险窗口: 截止前{carryover}小时发帖顺延到下一期")
-
-    if all_posts_summary is not None:
-        lines.append(f"当周全部帖子数: {int(all_posts_summary.get('total_posts', 0) or 0)}")
-        all_dist = dict(all_posts_summary.get("posts_by_date") or {})
-        selected_dist = dict(summary.get("posts_by_date") or {})
-        fit_info = _calc_date_distribution_fit(all_dist, selected_dist)
-
-        lines.append("")
-        lines.append("按日期发帖数（当周全部帖子）:")
-        if all_dist:
-            for day, count in all_dist.items():
-                lines.append(f"- {day}: {count}")
-        else:
-            lines.append("- 无数据")
-
-        lines.append("")
-        lines.append("当周入选帖子（Top15）按日期发帖数:")
-        if selected_dist:
-            for day, count in selected_dist.items():
-                lines.append(f"- {day}: {count}")
-        else:
-            lines.append("- 无数据")
-
-        lines.append("")
-        lines.append("日期分布拟合程度:")
-        lines.append(
-            f"- 综合拟合度: {fit_info['fit_score'] * 100:.2f}% "
-            f"(余弦相似度 {fit_info['cosine_similarity'] * 100:.2f}%, "
-            f"JS相似度 {fit_info['js_similarity'] * 100:.2f}%)"
-        )
-        lines.append("- 说明: 将两组日期计数先归一化为占比后比较分布形状。")
-    else:
-        lines.append("")
-        lines.append("按日期发帖数:")
-        for day, count in summary["posts_by_date"].items():
-            lines.append(f"- {day}: {count}")
-
-    if active_period is not None:
-        lines.append("")
-        lines.append("活跃时段分析:")
-        if int(active_period.get("valid_posts", 0) or 0) <= 0:
-            lines.append("- 样本不足，无法统计。")
-        else:
-            top_hour = int(active_period.get("top_hour", 0) or 0)
-            top_hour_count = int(active_period.get("top_hour_count", 0) or 0)
-            start = int(active_period.get("top_two_hour_start", 0) or 0)
-            two_count = int(active_period.get("top_two_hour_count", 0) or 0)
-            low_hour = int(active_period.get("low_hour", 0) or 0)
-            low_hour_count = int(active_period.get("low_hour_count", 0) or 0)
-            low_start = int(active_period.get("low_two_hour_start", 0) or 0)
-            low_two_count = int(active_period.get("low_two_hour_count", 0) or 0)
-            rec = int(active_period.get("recommended_anchor_hour", start) or start)
-            lines.append(f"- 单小时高峰: {top_hour:02d}:00-{top_hour:02d}:59，共 {top_hour_count} 帖")
-            lines.append(
-                f"- 两小时高峰: {start:02d}:00-{(start + 2) % 24:02d}:00，共 {two_count} 帖"
-            )
-            lines.append(f"- 单小时低谷: {low_hour:02d}:00-{low_hour:02d}:59，共 {low_hour_count} 帖")
-            lines.append(
-                f"- 两小时低谷: {low_start:02d}:00-{(low_start + 2) % 24:02d}:00，共 {low_two_count} 帖"
-            )
-            lines.append(f"- 建议固定周统计时间: 每周 {rec:02d}:00")
-
-    if leaderboards is not None:
-        lines.append("")
-        lines.append("评论数量榜 Top3:")
-        count_rows = list(leaderboards.get("comment_count_top3") or [])
-        if count_rows:
-            lines.extend(
-                (
-                    f"- {_format_leaderboard_line(item, include_hot=False, include_quality=False, include_like_total=False, include_post_span=True)}"
-                )
-                for item in count_rows
-            )
-        else:
-            lines.append("- 暂无评论数据")
-
-        lines.append("")
-        lines.append("评论质量榜 Top3:")
-        quality_rows = list(leaderboards.get("comment_quality_top3") or [])
-        if quality_rows:
-            lines.extend(
-                f"- {_format_leaderboard_line(item, include_hot=True, include_quality=False)}"
-                for item in quality_rows
-            )
-        else:
-            lines.append("- 暂无评论数据")
-
-    txt_path.parent.mkdir(parents=True, exist_ok=True)
-    txt_path.write_text("\n".join(lines), encoding="utf-8")
+    _export_write_summary_txt(
+        summary,
+        txt_path,
+        leaderboards=leaderboards,
+        active_period=active_period,
+        all_posts_summary=all_posts_summary,
+        carryover_hours=carryover_hours,
+        format_leaderboard_line=_format_leaderboard_line,
+    )
 
 
 def _calc_date_distribution_fit(
     all_dist: dict[str, int],
     selected_dist: dict[str, int],
 ) -> dict:
-    dates = sorted(set(all_dist.keys()) | set(selected_dist.keys()))
-    if not dates:
-        return {
-            "cosine_similarity": 0.0,
-            "js_similarity": 0.0,
-            "fit_score": 0.0,
-        }
-
-    all_total = sum(max(0, int(all_dist.get(d, 0) or 0)) for d in dates)
-    selected_total = sum(max(0, int(selected_dist.get(d, 0) or 0)) for d in dates)
-    if all_total <= 0 or selected_total <= 0:
-        return {
-            "cosine_similarity": 0.0,
-            "js_similarity": 0.0,
-            "fit_score": 0.0,
-        }
-
-    p = [max(0.0, float(all_dist.get(d, 0) or 0)) / float(all_total) for d in dates]
-    q = [max(0.0, float(selected_dist.get(d, 0) or 0)) / float(selected_total) for d in dates]
-
-    dot = sum(pi * qi for pi, qi in zip(p, q, strict=True))
-    norm_p = math.sqrt(sum(pi * pi for pi in p))
-    norm_q = math.sqrt(sum(qi * qi for qi in q))
-    cosine = dot / (norm_p * norm_q) if norm_p > 0 and norm_q > 0 else 0.0
-
-    m = [(pi + qi) / 2.0 for pi, qi in zip(p, q, strict=True)]
-
-    def _kl(a: list[float], b: list[float]) -> float:
-        acc = 0.0
-        for ai, bi in zip(a, b, strict=True):
-            if ai > 0 and bi > 0:
-                acc += ai * math.log(ai / bi)
-        return acc
-
-    js_div = 0.5 * _kl(p, m) + 0.5 * _kl(q, m)
-    js_similarity = max(0.0, 1.0 - (js_div / math.log(2.0)))
-
-    fit_score = max(0.0, min(1.0, 0.5 * cosine + 0.5 * js_similarity))
-    return {
-        "cosine_similarity": max(0.0, min(1.0, cosine)),
-        "js_similarity": max(0.0, min(1.0, js_similarity)),
-        "fit_score": fit_score,
-    }
+    return _export_calc_date_distribution_fit(all_dist, selected_dist)
 
 
 def normalize_date(text: str) -> str | None:
-    dt = parse_publish_datetime(text)
-    if dt is not None:
-        return dt.strftime("%Y-%m-%d")
-    text = text.strip()
-    m = re.search(r"(\d{4}-\d{1,2}-\d{1,2})", text)
-    if m:
-        return m.group(1)
-    return None
+    return _normalize_date(text)
 
 
 def _date_key_from_publish_time(text: str, parsed_dt: datetime | None = None) -> str:
@@ -2182,6 +1967,56 @@ def _date_key_from_publish_time(text: str, parsed_dt: datetime | None = None) ->
     return "未知日期"
 
 
+def _is_nested_feed_item(item: Tag) -> bool:
+    parent = item.parent
+    while isinstance(parent, Tag):
+        if parent.get("action-type") == "feed_list_item":
+            return True
+        if _is_forwarded_content_container(parent):
+            return True
+        parent = parent.parent
+    return False
+
+
+def _select_outer(root: Tag, selector: str) -> list[Tag]:
+    return [
+        node
+        for node in root.select(selector)
+        if isinstance(node, Tag) and not _is_inside_forwarded_content(node, root)
+    ]
+
+
+def _select_one_outer(root: Tag, selector: str) -> Tag | None:
+    for node in _select_outer(root, selector):
+        return node
+    return None
+
+
+def _is_inside_forwarded_content(node: Tag, root: Tag | None = None) -> bool:
+    current: Tag | None = node if isinstance(node, Tag) else None
+    while isinstance(current, Tag):
+        if root is not None and current is root:
+            return False
+        if _is_forwarded_content_container(current):
+            return True
+        if root is not None and current is not node and current.get("action-type") == "feed_list_item":
+            return True
+        current = current.parent if isinstance(current.parent, Tag) else None
+    return False
+
+
+def _is_forwarded_content_container(node: Tag) -> bool:
+    node_type = str(node.get("node-type") or "").strip()
+    if node_type in FORWARDED_NODE_TYPES:
+        return True
+    classes = node.get("class") or []
+    if isinstance(classes, str):
+        class_names = classes.split()
+    else:
+        class_names = [str(item) for item in classes]
+    return any(name in FORWARDED_CLASS_NAMES or name.startswith("WB_feed_expand") for name in class_names)
+
+
 def _extract_user_name(item: Tag) -> str:
     selectors = [
         "a[node-type='feed_list_item_name']",
@@ -2190,7 +2025,7 @@ def _extract_user_name(item: Tag) -> str:
         "a[usercard]",
     ]
     for sel in selectors:
-        text = _first_text(item.select(sel))
+        text = _first_text(_select_outer(item, sel))
         if text:
             return _clean_text(text)
     return ""
@@ -2202,7 +2037,7 @@ def _extract_author_id(item: Tag) -> str:
     if m:
         return m.group(1)
 
-    anchor = item.select_one("a[usercard]")
+    anchor = _select_one_outer(item, "a[usercard]")
     if anchor:
         usercard = str(anchor.get("usercard") or "")
         m = re.search(r"id=(\d+)", usercard)
@@ -2212,7 +2047,7 @@ def _extract_author_id(item: Tag) -> str:
 
 
 def _extract_publish_time(item: Tag) -> str:
-    date_link = item.select_one("a[node-type='feed_list_item_date']")
+    date_link = _select_one_outer(item, "a[node-type='feed_list_item_date']")
     if not date_link:
         return ""
     title = date_link.get("title")
@@ -2230,7 +2065,7 @@ def _extract_content(item: Tag) -> str:
     ]
     texts: list[str] = []
     for sel in selectors:
-        for node in item.select(sel):
+        for node in _select_outer(item, sel):
             text = _clean_text_preserve(node.get_text("\n", strip=True))
             if text:
                 texts.append(text)
@@ -2249,14 +2084,13 @@ def _extract_has_video(item: Tag) -> bool:
         "a[suda-data*='video']",
     ]
     for selector in selectors:
-        if item.select_one(selector):
+        if _select_one_outer(item, selector):
             return True
-    raw_html = str(item)
-    return "video" in raw_html.lower() and "feed_list_media" in raw_html
+    return False
 
 
 def _extract_post_url(item: Tag) -> str:
-    date_link = item.select_one("a[node-type='feed_list_item_date']")
+    date_link = _select_one_outer(item, "a[node-type='feed_list_item_date']")
     if not date_link:
         return ""
     href = str(date_link.get("href") or "").strip()
@@ -2267,7 +2101,7 @@ def _extract_original_image_urls(item: Tag) -> list[str]:
     urls: list[str] = []
 
     # 1) 浠庡浘鐗囧尯瀹瑰櫒 action-data 鐨?clear_picSrc 鎻愬彇
-    for node in item.select(".WB_media_a[action-data], .WB_media_wrap[action-data]"):
+    for node in _select_outer(item, ".WB_media_a[action-data], .WB_media_wrap[action-data]"):
         action_data = str(node.get("action-data") or "")
         if "pic" not in action_data.lower():
             continue
@@ -2279,7 +2113,7 @@ def _extract_original_image_urls(item: Tag) -> list[str]:
         )
 
     # 2) 浠庡浘鐗?media 鑺傜偣鎻愬彇 pid锛屾嫾鍘熷浘 URL
-    for media_node in item.select("[action-type='feed_list_media_img']"):
+    for media_node in _select_outer(item, "[action-type='feed_list_media_img']"):
         action_data = str(media_node.get("action-data") or "")
         pairs = dict(parse_qsl(action_data))
         pid_text = str(pairs.get("pic_ids") or pairs.get("pid") or "").strip()
@@ -2298,21 +2132,11 @@ def _extract_original_image_urls(item: Tag) -> list[str]:
 
 
 def _to_absolute_url(url: str) -> str:
-    u = (url or "").strip()
-    if not u:
-        return ""
-    if u.startswith("//"):
-        return "https:" + u
-    if u.startswith("/"):
-        return "https://weibo.com" + u
-    return u
+    return to_absolute_url(url)
 
 
 def _to_original_pic_url(url: str) -> str:
-    u = _to_absolute_url(url)
-    for seg in ["/orj360/", "/mw690/", "/thumb150/", "/square/", "/bmiddle/"]:
-        u = u.replace(seg, "/large/")
-    return u
+    return normalize_image_url(url)
 
 
 def _split_url_candidates(text: str) -> list[str]:
@@ -2353,11 +2177,9 @@ def _dedup_keep_order(values: list[str]) -> list[str]:
 def _extract_action_count(item: Tag, action_types: list[str]) -> int:
     best = 0
     for action_type in action_types:
-        action = item.select_one(f"a[action-type='{action_type}']")
-        if not action:
-            continue
-        text = _clean_text(action.get_text(" ", strip=True))
-        best = max(best, parse_count(text))
+        for action in _select_outer(item, f"a[action-type='{action_type}']"):
+            text = _clean_text(action.get_text(" ", strip=True))
+            best = max(best, parse_count(text))
     return best
 
 
@@ -2646,23 +2468,11 @@ def _looks_like_image_url(url: str) -> bool:
 
 
 def _html_to_text(text: str) -> str:
-    if not text:
-        return ""
-    try:
-        soup = BeautifulSoup(text, "lxml")
-    except Exception:
-        soup = BeautifulSoup(text, "html.parser")
-    return _clean_text(soup.get_text(" ", strip=True))
+    return strip_html_text(text)
 
 
 def _html_to_text_preserve(text: str) -> str:
-    if not text:
-        return ""
-    try:
-        soup = BeautifulSoup(text, "lxml")
-    except Exception:
-        soup = BeautifulSoup(text, "html.parser")
-    return _clean_text_preserve(soup.get_text("\n", strip=True))
+    return strip_html_text(text, preserve_newlines=True)
 
 
 def _strip_url_like_text(text: str) -> str:
@@ -2675,30 +2485,11 @@ def _strip_url_like_text(text: str) -> str:
 
 
 def _strip_specific_topic_tags(text: str) -> str:
-    raw = _clean_text(text)
-    patterns = [
-        r"#\s*warma超话[^#\n]{0,32}\s*#",
-        r"#\s*怒九笑超话[^#\n]{0,32}\s*#",
-        r"warma超话(?:\[[^\[\]]{1,24}\]|[（(][^）)]{1,24}[）)])?",
-        r"怒九笑超话(?:\[[^\[\]]{1,24}\]|[（(][^）)]{1,24}[）)])?",
-    ]
-    for pattern in patterns:
-        raw = re.sub(pattern, " ", raw, flags=re.I)
-    raw = re.sub(r"\s{2,}", " ", raw)
-    return raw.strip()
+    return clean_topic_tags(text)
 
 
 def _strip_specific_topic_tags_preserve(text: str) -> str:
-    raw = _clean_text_preserve(text)
-    patterns = [
-        r"#\s*warma超话[^#\n]{0,32}\s*#",
-        r"#\s*怒九笑超话[^#\n]{0,32}\s*#",
-        r"warma超话(?:\[[^\[\]]{1,24}\]|[（(][^）)]{1,24}[）)])?",
-        r"怒九笑超话(?:\[[^\[\]]{1,24}\]|[（(][^）)]{1,24}[）)])?",
-    ]
-    for pattern in patterns:
-        raw = re.sub(pattern, " ", raw, flags=re.I)
-    return _clean_text_preserve(raw)
+    return clean_topic_tags(text, preserve_newlines=True)
 
 
 def _safe_filename_part(text: str, max_len: int = 24) -> str:
@@ -2855,14 +2646,9 @@ def _first_text(elements: list) -> str:
 
 
 def _clean_text(text: str) -> str:
-    return re.sub(r"\s+", " ", (text or "")).strip()
+    return normalize_weibo_text(text)
 
 
 def _clean_text_preserve(text: str) -> str:
-    raw = (text or "").replace("\r\n", "\n").replace("\r", "\n")
-    raw = re.sub(r"[\t\f\v]+", " ", raw)
-    raw = re.sub(r"[ \u3000]{3,}", "  ", raw)
-    raw = re.sub(r" *\n *", "\n", raw)
-    raw = re.sub(r"\n{3,}", "\n\n", raw)
-    return raw.strip()
+    return collapse_blank_lines(text)
 

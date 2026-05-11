@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import re
+from contextlib import suppress
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -8,6 +11,7 @@ from core.errors import ReexportCacheMissingError, ReexportError
 from crawler import (
     analyze_active_period,
     build_comment_leaderboards,
+    build_report_title,
     build_summary,
     export_posts_csv,
     export_posts_xlsx,
@@ -45,6 +49,7 @@ def reexport_from_cache(
     run_config = store.read_stage("run_config") or {}
     community_stats = store.read_stage("community_stats") or {}
     images_manifest = store.read_stage("images_manifest") or {}
+    selected_posts = _restore_image_paths_from_manifest(run_dir, selected_posts, images_manifest)
     warnings = []
     warnings.extend(list(community_stats.get("warnings") or [])) if isinstance(community_stats, dict) else None
     warnings.extend(_collect_missing_image_warnings(run_dir, selected_posts))
@@ -58,9 +63,12 @@ def reexport_from_cache(
         if isinstance(community_stats, dict) and isinstance(community_stats.get("active_period"), dict)
         else analyze_active_period(posts_all)
     )
+    report_title = _report_title_from_config(run_config)
+    export_config = dict(run_config) if isinstance(run_config, dict) else {}
+    export_config.setdefault("report_title", report_title)
 
     files: dict[str, Any] = {
-        "markdown": run_dir / "warma_weekly_report.md",
+        "markdown": run_dir / "weekly_report.md",
         "docx": [],
         "docx_sum": run_dir / "weekly_report_sum.docx",
         "xlsx": run_dir / "weibo_posts.xlsx",
@@ -70,6 +78,7 @@ def reexport_from_cache(
     }
 
     try:
+        _remove_legacy_report_files(run_dir)
         if "excel" in export_set or "xlsx" in export_set:
             export_posts_xlsx(selected_posts, files["xlsx"])
         if "csv" in export_set:
@@ -87,7 +96,8 @@ def reexport_from_cache(
             _remove_generated_docx(run_dir)
             docx_paths = export_weekly_report_docx(
                 selected_posts,
-                run_dir / "warma_weekly_report.docx",
+                run_dir / "weekly_report.docx",
+                title=report_title,
                 leaderboards=leaderboards,
                 preselected=True,
             )
@@ -95,11 +105,18 @@ def reexport_from_cache(
             files["docx_sum"] = export_weekly_report_sum_docx(
                 selected_posts,
                 run_dir / "weekly_report_sum.docx",
+                title=report_title,
                 leaderboards=leaderboards,
                 preselected=True,
             )
         if "markdown" in export_set:
-            export_weekly_report_md(selected_posts, files["markdown"], leaderboards=leaderboards, preselected=True)
+            export_weekly_report_md(
+                selected_posts,
+                files["markdown"],
+                title=report_title,
+                leaderboards=leaderboards,
+                preselected=True,
+            )
     except PermissionError as err:
         raise ReexportError("文件写入失败", "请关闭正在打开的 Word/Excel 文件后重试。") from err
     except OSError as err:
@@ -114,7 +131,7 @@ def reexport_from_cache(
         run_dir=run_dir,
         selected_posts=selected_posts,
         all_posts=posts_all,
-        config=run_config if isinstance(run_config, dict) else {},
+        config=export_config,
         stats=summary,
         images_manifest=images_manifest if isinstance(images_manifest, dict) else None,
         reexport=True,
@@ -129,8 +146,8 @@ def reexport_from_cache(
         status="reexported",
     )
     write_manifest(run_dir, manifest)
-    if selected_post_ids is not None:
-        store.write_stage("selected_posts", selected_posts)
+    store.write_stage("run_config", export_config)
+    store.write_stage("selected_posts", selected_posts)
     return {
         "message": "重新生成完成",
         "manifest": sanitize_for_cache(manifest),
@@ -159,6 +176,112 @@ def _resolve_selected_posts(
     return selected
 
 
+def _report_title_from_config(config: Any) -> str:
+    if not isinstance(config, dict):
+        return build_report_title()
+    explicit_title = str(config.get("report_title") or "").strip()
+    if explicit_title:
+        return explicit_title
+    return build_report_title(config.get("super_topic_name"), config.get("super_topic"))
+
+
+def _restore_image_paths_from_manifest(
+    run_dir: Path,
+    posts: list[dict],
+    images_manifest: Any,
+) -> list[dict]:
+    if not isinstance(images_manifest, dict):
+        return deepcopy(posts)
+
+    success_rows = [row for row in list(images_manifest.get("success") or []) if isinstance(row, dict)]
+    if not success_rows:
+        return deepcopy(posts)
+
+    rows_by_post: dict[str, dict[str, list[dict]]] = {}
+    for row in success_rows:
+        post_id = str(row.get("post_id") or "")
+        image_type = str(row.get("type") or "")
+        local_path = str(row.get("local_path") or "").strip()
+        if not post_id or not image_type or not local_path:
+            continue
+        rows_by_post.setdefault(post_id, {}).setdefault(image_type, []).append(row)
+
+    restored = deepcopy(posts)
+    for post in restored:
+        if not isinstance(post, dict):
+            continue
+        post_id = str(post.get("post_id") or "")
+        grouped = rows_by_post.get(post_id) or {}
+        post_rows = list(grouped.get("post_image") or [])
+        comment_rows = list(grouped.get("comment_image") or [])
+
+        post_paths = [_manifest_local_path(run_dir, row) for row in post_rows]
+        if post_paths:
+            post["image_local_paths"] = " | ".join(post_paths)
+            post["downloaded_image_count"] = len(post_paths)
+
+        comment_paths_all: list[str] = []
+        comments = list(post.get("top_comments_data") or [])
+        if comments and comment_rows:
+            rows_by_url: dict[str, list[dict]] = {}
+            for row in comment_rows:
+                rows_by_url.setdefault(str(row.get("url") or ""), []).append(row)
+            sequential_rows = list(comment_rows)
+
+            for comment in comments:
+                if not isinstance(comment, dict):
+                    continue
+                urls = _split_paths(comment.get("image_urls"))
+                if urls:
+                    comment["image_urls"] = " | ".join(urls)
+                local_paths: list[str] = []
+                for url in urls:
+                    matched_row = _pop_manifest_row(rows_by_url, sequential_rows, url)
+                    if matched_row:
+                        local_paths.append(_manifest_local_path(run_dir, matched_row))
+                if not local_paths and comment.get("image_local_paths"):
+                    local_paths = _split_paths(comment.get("image_local_paths"))
+                if local_paths:
+                    comment["image_local_paths"] = " | ".join(local_paths)
+                    comment_paths_all.extend(local_paths)
+
+            post["top_comments_data"] = comments
+
+        if comment_paths_all:
+            post["comment_image_local_paths"] = " | ".join(comment_paths_all)
+            post["downloaded_comment_image_count"] = len(comment_paths_all)
+
+        all_paths = post_paths + comment_paths_all
+        if all_paths:
+            post["image_local_paths_all"] = " | ".join(all_paths)
+
+    return restored
+
+
+def _manifest_local_path(run_dir: Path, row: dict) -> str:
+    text = str(row.get("local_path") or "").strip()
+    path = Path(text)
+    if path.is_absolute():
+        return str(path)
+    return str((run_dir / path).resolve())
+
+
+def _pop_manifest_row(
+    rows_by_url: dict[str, list[dict]],
+    sequential_rows: list[dict],
+    url: str,
+) -> dict | None:
+    bucket = rows_by_url.get(str(url or ""))
+    if bucket:
+        row = bucket.pop(0)
+        with suppress(ValueError):
+            sequential_rows.remove(row)
+        return row
+    if sequential_rows:
+        return sequential_rows.pop(0)
+    return None
+
+
 def _normalize_export_types(export_types: list[str] | None) -> set[str]:
     if not export_types:
         return set(DEFAULT_EXPORT_TYPES)
@@ -168,12 +291,29 @@ def _normalize_export_types(export_types: list[str] | None) -> set[str]:
 
 
 def _remove_generated_docx(run_dir: Path) -> None:
-    for path in run_dir.glob("warma_weekly_report*.docx"):
-        if path.name == "warma_weekly_report.docx" or path.name.startswith("warma_weekly_report_"):
-            path.unlink(missing_ok=True)
+    for pattern in ("weekly_report*.docx", "warma_weekly_report*.docx"):
+        for path in run_dir.glob(pattern):
+            if _is_generated_report_docx(path.name):
+                path.unlink(missing_ok=True)
     target = run_dir / "weekly_report_sum.docx"
     if target.exists():
         target.unlink()
+
+
+def _is_generated_report_docx(name: str) -> bool:
+    return (
+        name == "weekly_report.docx"
+        or name == "weekly_report_sum.docx"
+        or re.fullmatch(r"weekly_report_\d{2}\.docx", name) is not None
+        or name == "warma_weekly_report.docx"
+        or re.fullmatch(r"warma_weekly_report_\d{2}\.docx", name) is not None
+    )
+
+
+def _remove_legacy_report_files(run_dir: Path) -> None:
+    for path in [run_dir / "warma_weekly_report.md", *run_dir.glob("warma_weekly_report*.docx")]:
+        if path.exists():
+            path.unlink(missing_ok=True)
 
 
 def _collect_missing_image_warnings(run_dir: Path, posts: list[dict]) -> list[str]:

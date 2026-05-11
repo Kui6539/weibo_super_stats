@@ -133,8 +133,8 @@ output/20260508_210000/
 - `weibo_posts.xlsx`：中文列名表格，包含帖子数据、热评与图片预览。
 - `weibo_posts.csv`：中文列名 CSV，便于进一步分析。
 - `weibo_summary.txt`：本次统计摘要。
-- `warma_weekly_report.md`：适合导入编辑器或平台二次排版的 Markdown 周报。
-- `warma_weekly_report_01.docx`、`warma_weekly_report_02.docx` 等：按 10MB 自动分割的 Word 周报。
+- `weekly_report.md`：适合导入编辑器或平台二次排版的 Markdown 周报。
+- `weekly_report_01.docx`、`weekly_report_02.docx` 等：按 10MB 自动分割的 Word 周报。
 - `images/`：下载的帖子图片和热评图片。
 
 图片目录会按最终入选排名分组：
@@ -211,14 +211,32 @@ modules/
   crawler_scoring.py   # 评分明细与基础评分计算
   crawler_filters.py   # 视频帖、汇总帖、导航帖过滤判断
   crawler_client.py    # 轻量微博请求封装与 Cookie 检测
+  cookie_parser.py     # Cookie 文本、请求头、cURL 片段解析与脱敏
+  cookie_edge_debug.py # 调试 Edge 启动、读取和关闭封装
+  cookie_browser_store.py # Edge/Chrome 本地 Cookie 存储读取封装
+  cookie_validator.py  # Cookie 轻量状态检测入口
+  text_cleaning.py     # 微博正文、HTML、话题标签清理
+  weibo_url.py         # 微博链接、帖子 ID、图片 URL、超话 ID 处理
+  time_utils.py        # 微博时间解析和时间窗口判断
+  post_normalizer.py   # 帖子字段补齐和前端序列化
 export/
   context.py           # 导出上下文
   manifest.py          # manifest.json 生成与写入
+  markdown_exporter.py # Markdown 周报导出
+  csv_exporter.py      # CSV 导出
+  summary_exporter.py  # summary 文本导出
+web/
+  styles.css           # CSS 入口，按功能导入 web/css/
+  app.js               # 旧入口兼容，加载 web/js/main.js
+  css/                 # base/layout/components/forms/progress 等样式分区
+  js/                  # api/state/utils/main 等前端脚本分区
 crawler.py             # 兼容入口，仍保留主要抓取、解析和导出实现
 tests/                 # 标准库 unittest 测试
 ```
 
-`crawler.py` 暂时仍保留 HTML 解析、长正文补全、评论分析、图片下载和 DOCX/XLSX/CSV/Markdown 具体导出函数。这些逻辑耦合较深，后续应按小步迁移到 `modules/` 与 `export/`，避免一次性重写导致抓取流程回归。
+第五期拆分后，`cookie_helper.py` 仍作为兼容入口，对外保留原有函数名；具体的 Cookie 文本解析、调试 Edge、本地浏览器存储读取和轻量检测已迁移到 `modules/`。WebUI 保持无框架实现，`web/js/main.js` 暂时承载主流程，`api.js`、`utils.js`、`state.js` 先承接通用能力，其他文件作为后续细拆边界。
+
+`crawler.py` 暂时仍保留 HTML 解析、长正文补全、评论分析、图片下载、DOCX 复杂排版和 XLSX 嵌图逻辑。Markdown、CSV、summary 这类低风险导出已迁移到 `export/`，并由 `crawler.py` 保留兼容转发。未拆部分耦合较深，后续应按小步迁移，避免一次性重写导致抓取流程回归。
 
 ### 本地启动
 
@@ -283,11 +301,11 @@ output/20260508_210000/
 
 重新生成会默认覆盖这些项目生成文件：
 
-- `warma_weekly_report.md`
+- `weekly_report.md`
 - `weibo_posts.xlsx`
 - `weibo_posts.csv`
 - `weibo_summary.txt`
-- `warma_weekly_report*.docx`
+- `weekly_report*.docx`
 - `weekly_report_sum.docx`
 
 它只删除符合项目命名规则的旧 DOCX，不会删除用户手动放入目录的其他文件。如果写入失败，请先关闭正在打开的 Word/Excel 文件后重试。

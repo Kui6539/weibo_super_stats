@@ -14,6 +14,8 @@ from pathlib import Path
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
+from modules.cookie_parser import extract_cookie_from_text, mask_cookie_for_log, normalize_cookie
+
 CDP_DEFAULT_ENDPOINTS = ("http://127.0.0.1:9222", "http://localhost:9222")
 CDP_ENV_VAR = "WEIBO_COOKIE_CDP_URL"
 WEIBO_LOGIN_COOKIE_NAMES = {"SUB"}
@@ -21,38 +23,19 @@ WEIBO_COOKIE_URLS = (
     "https://weibo.com/",
     "https://weibo.com/p/1008080c5ef5dee7defd2f23ad650e84339319/super_index",
 )
+__all__ = [
+    "CookieFetchError",
+    "close_edge_debug_browser",
+    "extract_cookie_from_text",
+    "get_weibo_cookie_header",
+    "launch_edge_debug_browser",
+    "mask_cookie_for_log",
+    "normalize_cookie",
+]
 
 
 class CookieFetchError(Exception):
     pass
-
-
-def extract_cookie_from_text(text: str) -> str:
-    raw = text.strip()
-    if not raw:
-        return ""
-
-    # 1) 原始请求头格式: Cookie: a=1; b=2
-    m = re.search(r"(?im)^\s*cookie\s*:\s*(.+?)\s*$", raw)
-    if m:
-        return m.group(1).strip().strip("'\"")
-
-    # 2) cURL 片段: -H 'cookie: a=1; b=2'
-    m = re.search(r"-H\s+['\"]cookie:\s*(.+?)['\"]", raw, flags=re.IGNORECASE)
-    if m:
-        return m.group(1).strip()
-
-    # 3) cURL 片段: -b 'a=1; b=2' 或 --cookie 'a=1; b=2'
-    m = re.search(r"(?:-b|--cookie)\s+['\"](.+?)['\"]", raw, flags=re.IGNORECASE)
-    if m:
-        return m.group(1).strip()
-
-    # 4) JSON/对象片段: "Cookie": "a=1; b=2"
-    m = re.search(r'(?i)"cookie"\s*:\s*"(.+?)"', raw)
-    if m:
-        return m.group(1).strip()
-
-    return ""
 
 
 def get_weibo_cookie_header() -> str:
