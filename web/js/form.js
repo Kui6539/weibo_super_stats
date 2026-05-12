@@ -9,6 +9,10 @@ window.WeiboForm = {
         max_pages: fields.maxPages.value,
         topic_comment_factor: fields.topicCommentFactor.value,
         pause_seconds: fields.pauseSeconds.value,
+        likes_weight: fields.likesWeight.value,
+        comment_weight: fields.commentWeight.value,
+        author_reply_weight: fields.authorReplyWeight.value,
+        repost_weight: fields.repostWeight.value,
         output_dir: fields.outputDir.value.trim(),
         theme: getTheme(),
         advanced_mode: controls.advancedMode.checked,
@@ -22,6 +26,10 @@ window.WeiboForm = {
         max_pages: fields.maxPages.value,
         topic_comment_factor: fields.topicCommentFactor.value,
         pause_seconds: fields.pauseSeconds.value,
+        likes_weight: fields.likesWeight.value,
+        comment_weight: fields.commentWeight.value,
+        author_reply_weight: fields.authorReplyWeight.value,
+        repost_weight: fields.repostWeight.value,
         output_dir: fields.outputDir.value.trim(),
         theme: getTheme(),
         advanced_mode: controls.advancedMode.checked,
@@ -43,6 +51,10 @@ window.WeiboForm = {
       fields.maxPages.value = defaults.max_pages || 80;
       fields.topicCommentFactor.value = defaults.topic_comment_factor || 1;
       fields.pauseSeconds.value = defaults.pause_seconds || 1;
+      fields.likesWeight.value = defaults.likes_weight ?? 0.3;
+      fields.commentWeight.value = defaults.comment_weight ?? 0.5;
+      fields.authorReplyWeight.value = defaults.author_reply_weight ?? 0.2;
+      fields.repostWeight.value = defaults.repost_weight ?? 0.1;
       fields.outputDir.value = defaults.output_dir || "";
       setAdvancedMode(defaults.advanced_mode === true || defaults.advanced_mode === "true");
     }

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
@@ -19,14 +20,28 @@ from cookie_helper import (
 )
 from core.cache import CacheStore
 from core.config import (
+    activate_preset,
     app_defaults,
     build_crawl_config,
     clear_config,
-    load_config,
+    delete_preset,
+    duplicate_preset,
+    get_presets_payload,
+    load_saved_config,
     save_user_config,
+    save_preset,
     validate_config_payload,
 )
 from core.errors import WeiboStatsError, to_error_response
+from core.history import (
+    add_history_item_from_manifest,
+    find_history_item,
+    get_history_items,
+    load_history,
+    remove_history_item,
+    resolve_history_report_dir,
+    scan_output_history,
+)
 from core.job import (
     ACTIVE_STATUSES,
     cancel_current_job,
@@ -35,6 +50,7 @@ from core.job import (
     get_current_job,
     serialize_job,
 )
+from core.output_cleanup import cleanup_output, cleanup_preview, output_summary
 from core.paths import is_relative_to, normalize_output_dir, safe_resolve
 from crawler import parse_super_topic_id
 from export.reexport import reexport_from_cache
@@ -61,6 +77,12 @@ class AppRequestHandler(BaseHTTPRequestHandler):
         if path == "/api/defaults":
             self.handle_get_config()
             return
+        if path == "/api/presets":
+            self.handle_get_presets()
+            return
+        if path == "/api/history":
+            self.handle_history()
+            return
         if path == "/api/status":
             self.handle_status()
             return
@@ -69,6 +91,9 @@ class AppRequestHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/report-asset":
             self.handle_report_asset()
+            return
+        if path == "/api/history/asset":
+            self.handle_history_asset()
             return
         if path == "/api/help-doc":
             self.handle_help_doc()
@@ -111,6 +136,45 @@ class AppRequestHandler(BaseHTTPRequestHandler):
             if path == "/api/reexport":
                 self.handle_reexport()
                 return
+            if path == "/api/history/scan":
+                self.handle_history_scan()
+                return
+            if path == "/api/history/remove":
+                self.handle_history_remove()
+                return
+            if path == "/api/history/cache-status":
+                self.handle_history_cache_status()
+                return
+            if path == "/api/history/reexport":
+                self.handle_history_reexport()
+                return
+            if path == "/api/history/open-dir":
+                self.handle_history_open_dir()
+                return
+            if path == "/api/history/preview":
+                self.handle_history_preview()
+                return
+            if path == "/api/presets/save":
+                self.handle_presets_save()
+                return
+            if path == "/api/presets/delete":
+                self.handle_presets_delete()
+                return
+            if path == "/api/presets/activate":
+                self.handle_presets_activate()
+                return
+            if path == "/api/presets/duplicate":
+                self.handle_presets_duplicate()
+                return
+            if path == "/api/output/summary":
+                self.handle_output_summary()
+                return
+            if path == "/api/output/cleanup-preview":
+                self.handle_output_cleanup_preview()
+                return
+            if path == "/api/output/cleanup":
+                self.handle_output_cleanup()
+                return
             if path == "/api/start":
                 self.handle_start()
                 return
@@ -152,6 +216,10 @@ class AppRequestHandler(BaseHTTPRequestHandler):
         defaults = app_defaults()
         json_ok(self, {"defaults": defaults}, defaults=defaults)
 
+    def handle_get_presets(self) -> None:
+        data = get_presets_payload()
+        json_ok(self, data, **data)
+
     def handle_save_config(self) -> None:
         payload = parse_json_body(self)
         config = save_user_config(payload)
@@ -168,6 +236,10 @@ class AppRequestHandler(BaseHTTPRequestHandler):
     def handle_status(self) -> None:
         snapshot = serialize_job(get_current_job())
         json_ok(self, {"job": snapshot}, job=snapshot)
+
+    def handle_history(self) -> None:
+        history = load_history()
+        json_ok(self, {"history": history, "items": history.get("items", [])}, history=history, items=history.get("items", []))
 
     def handle_select(self) -> None:
         payload = parse_json_body(self)
@@ -240,10 +312,168 @@ class AppRequestHandler(BaseHTTPRequestHandler):
             selected_post_ids=payload.get("selected_post_ids"),
             export_types=list(payload.get("export_types") or []),
         )
+        if isinstance(data.get("manifest"), dict):
+            add_history_item_from_manifest(run_dir, data["manifest"])
+        json_ok(self, data, **data)
+
+    def handle_history_scan(self) -> None:
+        payload = parse_json_body(self)
+        data = scan_output_history(payload.get("output_dir") or "output")
+        json_ok(self, data, **data)
+
+    def handle_history_remove(self) -> None:
+        payload = parse_json_body(self)
+        run_id = str(payload.get("run_id") or "").strip()
+        if not run_id:
+            raise ValueError("请填写 run_id。")
+        item = find_history_item(run_id)
+        if payload.get("delete_files"):
+            if payload.get("confirm") is not True:
+                json_error(self, "DELETE_CONFIRM_REQUIRED", "删除真实文件需要二次确认", "请确认 delete_files=true 且 confirm=true。", HTTPStatus.BAD_REQUEST)
+                return
+            report_dir = resolve_history_report_dir(run_id)
+            output_root = (ROOT_DIR / "output").resolve()
+            if not is_relative_to(report_dir, output_root) or not re.match(r"^\d{8}_\d{6}$", report_dir.name):
+                json_error(self, "DELETE_PATH_REJECTED", "拒绝删除非运行目录", "只能删除 output 下的时间戳运行目录。", HTTPStatus.BAD_REQUEST)
+                return
+            if report_dir.exists() and report_dir.is_dir():
+                shutil.rmtree(report_dir)
+        history = remove_history_item(run_id)
+        json_ok(self, {"history": history, "removed": run_id, "item": item}, history=history, removed=run_id, item=item)
+
+    def handle_history_cache_status(self) -> None:
+        payload = parse_json_body(self)
+        run_dir = resolve_history_report_dir(str(payload.get("run_id") or ""))
+        data = CacheStore(run_dir).get_cache_status()
+        json_ok(self, data, **data)
+
+    def handle_history_reexport(self) -> None:
+        payload = parse_json_body(self)
+        run_dir = resolve_history_report_dir(str(payload.get("run_id") or ""))
+        data = reexport_from_cache(
+            run_dir,
+            selected_post_ids=payload.get("selected_post_ids"),
+            export_types=list(payload.get("export_types") or []),
+        )
+        if isinstance(data.get("manifest"), dict):
+            add_history_item_from_manifest(run_dir, data["manifest"])
+        json_ok(self, data, **data)
+
+    def handle_history_open_dir(self) -> None:
+        payload = parse_json_body(self)
+        run_dir = resolve_history_report_dir(str(payload.get("run_id") or ""))
+        open_local_path(run_dir)
+        send_json(self, {"path": str(run_dir)})
+
+    def handle_history_preview(self) -> None:
+        payload = parse_json_body(self)
+        run_dir = resolve_history_report_dir(str(payload.get("run_id") or ""))
+        manifest_path = run_dir / "manifest.json"
+        md_path: Path | None = None
+        if manifest_path.exists():
+            import json as _json
+            manifest = _json.loads(manifest_path.read_text(encoding="utf-8"))
+            files = manifest.get("files") if isinstance(manifest.get("files"), dict) else {}
+            md_name = files.get("markdown")
+            if md_name:
+                candidate = Path(str(md_name))
+                if not candidate.is_absolute():
+                    candidate = run_dir / candidate
+                if candidate.exists() and candidate.is_file():
+                    md_path = candidate
+        if not md_path:
+            for name in ("weekly_report.md", "report.md"):
+                candidate = run_dir / name
+                if candidate.exists() and candidate.is_file():
+                    md_path = candidate
+                    break
+        if not md_path:
+            json_error(self, "NO_MARKDOWN", "该历史任务没有 Markdown 报告", "请确认报告文件是否存在。", HTTPStatus.NOT_FOUND)
+            return
+        try:
+            markdown = md_path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            markdown = md_path.read_text(encoding="utf-8-sig")
+        send_json(self, {"markdown": markdown, "path": str(md_path)})
+
+    def handle_history_asset(self) -> None:
+        parsed = urlparse(self.path)
+        qs = parse_qs(parsed.query)
+        run_id = (qs.get("run_id") or [""])[0]
+        rel_text = (qs.get("path") or [""])[0]
+        if not run_id or not rel_text:
+            json_error(self, "BAD_REQUEST", "缺少参数", "需要 run_id 和 path 参数。", HTTPStatus.BAD_REQUEST)
+            return
+        run_dir = resolve_history_report_dir(run_id)
+        asset_path = resolve_report_asset_path(run_dir / "_placeholder", rel_text)
+        if not asset_path:
+            json_error(self, "ASSET_NOT_FOUND", "资源不存在", "请检查路径。", HTTPStatus.NOT_FOUND)
+            return
+        send_static_file(self, asset_path)
+
+    def handle_presets_save(self) -> None:
+        payload = parse_json_body(self)
+        preset = payload.get("preset") if isinstance(payload.get("preset"), dict) else payload
+        data = save_preset(str(payload.get("preset_id") or payload.get("id") or ""), dict(preset))
+        json_ok(self, data, **data)
+
+    def handle_presets_delete(self) -> None:
+        payload = parse_json_body(self)
+        data = delete_preset(str(payload.get("preset_id") or payload.get("id") or ""))
+        json_ok(self, data, **data)
+
+    def handle_presets_activate(self) -> None:
+        payload = parse_json_body(self)
+        data = activate_preset(str(payload.get("preset_id") or payload.get("id") or ""))
+        json_ok(self, data, **data)
+
+    def handle_presets_duplicate(self) -> None:
+        payload = parse_json_body(self)
+        data = duplicate_preset(
+            str(payload.get("source_id") or payload.get("preset_id") or payload.get("id") or ""),
+            str(payload.get("new_id") or "") or None,
+            str(payload.get("name") or "") or None,
+        )
+        json_ok(self, data, **data)
+
+    def handle_output_summary(self) -> None:
+        payload = parse_json_body(self)
+        data = output_summary(payload.get("output_dir") or "output")
+        json_ok(self, data, **data)
+
+    def handle_output_cleanup_preview(self) -> None:
+        payload = parse_json_body(self)
+        data = cleanup_preview(
+            output_dir=payload.get("output_dir") or "output",
+            older_than_days=payload.get("older_than_days"),
+            keep_recent=parse_optional_int(payload.get("keep_recent"), 5),
+            incomplete_only=bool(payload.get("incomplete_only")),
+            include_warnings=bool(payload.get("include_warnings")),
+            include_failed=bool(payload.get("include_failed")),
+        )
+        json_ok(self, data, **data)
+
+    def handle_output_cleanup(self) -> None:
+        payload = parse_json_body(self)
+        data = cleanup_output(
+            output_dir=payload.get("output_dir") or "output",
+            confirm=payload.get("confirm") is True,
+            older_than_days=payload.get("older_than_days"),
+            keep_recent=parse_optional_int(payload.get("keep_recent"), 5),
+            incomplete_only=bool(payload.get("incomplete_only")),
+            include_warnings=bool(payload.get("include_warnings")),
+            include_failed=bool(payload.get("include_failed")),
+        )
         json_ok(self, data, **data)
 
     def handle_report_preview(self) -> None:
-        report_path = current_report_md_path()
+        parsed = urlparse(self.path)
+        qs_md = parse_qs(parsed.query).get("md_path", [])
+        if qs_md and qs_md[0]:
+            path = Path(qs_md[0])
+            report_path = path.resolve() if path.exists() and path.is_file() else None
+        else:
+            report_path = current_report_md_path()
         if not report_path:
             json_error(self, "NO_MARKDOWN_REPORT", "当前没有可预览的 Markdown 周报", "请先完成一次导出。", HTTPStatus.NOT_FOUND)
             return
@@ -254,12 +484,18 @@ class AppRequestHandler(BaseHTTPRequestHandler):
         send_json(self, {"markdown": markdown, "path": str(report_path)})
 
     def handle_report_asset(self) -> None:
-        report_path = current_report_md_path()
+        parsed = urlparse(self.path)
+        qs = parse_qs(parsed.query)
+        qs_md = qs.get("md_path", [])
+        if qs_md and qs_md[0]:
+            md_file = Path(qs_md[0])
+            report_path = md_file.resolve() if md_file.exists() and md_file.is_file() else None
+        else:
+            report_path = current_report_md_path()
         if not report_path:
             json_error(self, "NO_MARKDOWN_REPORT", "当前没有可预览的 Markdown 周报", "请先完成一次导出。", HTTPStatus.NOT_FOUND)
             return
-        parsed = urlparse(self.path)
-        rel_values = parse_qs(parsed.query).get("path", [])
+        rel_values = qs.get("path", [])
         rel_text = rel_values[0] if rel_values else ""
         asset_path = resolve_report_asset_path(report_path, rel_text)
         if not asset_path:
@@ -278,7 +514,14 @@ class AppRequestHandler(BaseHTTPRequestHandler):
         send_json(self, {"markdown": markdown, "path": str(HELP_DOC_PATH)})
 
     def handle_open_result_dir(self) -> None:
-        result_dir = current_result_dir_path()
+        payload = parse_json_body(self)
+        run_dir_value = (payload.get("run_dir") or "").strip() if payload else ""
+        if run_dir_value:
+            result_dir = Path(run_dir_value)
+            if not result_dir.exists() or not result_dir.is_dir():
+                result_dir = None
+        else:
+            result_dir = current_result_dir_path()
         if not result_dir:
             raise ValueError("当前没有可打开的导出目录。")
         open_local_path(result_dir)
@@ -355,13 +598,22 @@ def check_cookie_state(payload: dict[str, Any]) -> dict[str, str]:
     return WeiboClient(cookie=cookie, timeout=10, retry=0).check_cookie(topic_id)
 
 
+def parse_optional_int(value: Any, default: int) -> int:
+    if value is None or value == "":
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def resolve_run_dir_from_payload(payload: dict[str, Any]) -> Path:
     raw = str(payload.get("run_dir") or "").strip()
     if not raw:
         raise ValueError("请填写运行目录。")
     path = Path(raw).expanduser()
     path = (ROOT_DIR / path).resolve() if not path.is_absolute() else path.resolve()
-    configured_output = normalize_output_dir(load_config().get("output_dir")).resolve()
+    configured_output = normalize_output_dir(load_saved_config().get("output_dir")).resolve()
     allowed_roots = [ROOT_DIR.resolve(), configured_output]
     if not any(is_relative_to(path, root) for root in allowed_roots):
         raise ValueError("运行目录不在允许的项目或导出目录范围内。")

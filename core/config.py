@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+from copy import deepcopy
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -15,20 +16,53 @@ from modules.weibo_url import parse_super_topic_id
 ROOT_DIR = Path(__file__).resolve().parents[1]
 CONFIG_PATH = ROOT_DIR / "weibo_stats_config.json"
 DEFAULT_SUPER_TOPIC = "https://weibo.com/p/1008080c5ef5dee7defd2f23ad650e84339319/super_index"
-CONFIG_VERSION = 2
 
-DEFAULT_CONFIG: dict[str, Any] = {
-    "version": CONFIG_VERSION,
+CONFIG_VERSION = 3
+DEFAULT_PRESET_ID = "default"
+
+DEFAULT_PRESET: dict[str, Any] = {
+    "name": "默认预设",
     "super_topic": DEFAULT_SUPER_TOPIC,
-    "cookie": "",
     "max_pages": "80",
     "topic_comment_factor": "1.0",
+    "likes_weight": "0.3",
+    "comment_weight": "0.5",
+    "author_reply_weight": "0.2",
+    "repost_weight": "0.1",
     "pause_seconds": "1.0",
     "output_dir": "output",
+    "export_types": ["markdown", "docx", "excel", "csv", "summary"],
+    "download_images": True,
+}
+
+DEFAULT_GLOBAL: dict[str, Any] = {
+    "cookie": "",
     "theme": "dark",
     "advanced_mode": "false",
     "log_position": {"mode": "bubble", "left": 18, "top": 86},
     "cookie_browser": "edge",
+}
+
+DEFAULT_CONFIG: dict[str, Any] = {
+    "version": CONFIG_VERSION,
+    "active_preset": DEFAULT_PRESET_ID,
+    "presets": {DEFAULT_PRESET_ID: deepcopy(DEFAULT_PRESET)},
+    "global": deepcopy(DEFAULT_GLOBAL),
+}
+
+PRESET_KEYS = {
+    "name",
+    "super_topic",
+    "max_pages",
+    "topic_comment_factor",
+    "likes_weight",
+    "comment_weight",
+    "author_reply_weight",
+    "repost_weight",
+    "pause_seconds",
+    "output_dir",
+    "export_types",
+    "download_images",
 }
 
 
@@ -62,7 +96,7 @@ def _parse_datetime_with_format(text: str, fmt: str) -> datetime | None:
 
 def load_config() -> dict[str, Any]:
     if not CONFIG_PATH.exists():
-        return dict(DEFAULT_CONFIG)
+        return deepcopy(DEFAULT_CONFIG)
     try:
         data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
@@ -70,11 +104,11 @@ def load_config() -> dict[str, Any]:
         return migrate_config(data)
     except Exception:
         _backup_broken_config()
-        return dict(DEFAULT_CONFIG)
+        return deepcopy(DEFAULT_CONFIG)
 
 
 def load_saved_config() -> dict[str, Any]:
-    data = load_config()
+    data = flatten_active_config(load_config())
     theme = str(data.get("theme") or "").strip().lower()
     if theme not in {"dark", "light"}:
         theme = ""
@@ -86,28 +120,45 @@ def load_saved_config() -> dict[str, Any]:
         "cookie": str(data.get("cookie") or "").strip(),
         "max_pages": str(data.get("max_pages") or "").strip(),
         "topic_comment_factor": str(data.get("topic_comment_factor") or "").strip(),
+        "likes_weight": str(data.get("likes_weight") or "").strip(),
+        "comment_weight": str(data.get("comment_weight") or "").strip(),
+        "author_reply_weight": str(data.get("author_reply_weight") or "").strip(),
+        "repost_weight": str(data.get("repost_weight") or "").strip(),
         "pause_seconds": str(data.get("pause_seconds") or "").strip(),
         "output_dir": str(data.get("output_dir") or "").strip(),
         "theme": theme,
         "advanced_mode": advanced_mode,
         "log_position": normalize_log_position(data.get("log_position")),
         "cookie_browser": normalize_cookie_browser(data.get("cookie_browser")),
+        "export_types": list(data.get("export_types") or DEFAULT_PRESET["export_types"]),
+        "download_images": bool(data.get("download_images", True)),
+        "active_preset": str(data.get("active_preset") or DEFAULT_PRESET_ID),
+        "preset_name": str(data.get("preset_name") or "默认预设"),
     }
 
 
 def migrate_config(config: dict[str, Any]) -> dict[str, Any]:
-    migrated = dict(DEFAULT_CONFIG)
+    migrated = deepcopy(DEFAULT_CONFIG)
     source = config.get("settings") if isinstance(config.get("settings"), dict) else config
-    for key in ("super_topic", "cookie", "max_pages", "topic_comment_factor", "pause_seconds", "output_dir", "theme", "advanced_mode"):
-        if key in source:
-            migrated[key] = str(source.get(key) or "").strip()
-    if "log_position" in source:
-        migrated["log_position"] = normalize_log_position(source.get("log_position"))
-    if "cookie_browser" in source:
-        migrated["cookie_browser"] = normalize_cookie_browser(source.get("cookie_browser"))
-    theme = str(migrated.get("theme") or "").lower()
-    migrated["theme"] = theme if theme in {"dark", "light"} else "dark"
-    migrated["advanced_mode"] = "true" if _as_bool(migrated.get("advanced_mode")) else "false"
+
+    presets_src = source.get("presets") if isinstance(source.get("presets"), dict) else None
+    if presets_src:
+        migrated["presets"] = {}
+        for preset_id, preset_value in presets_src.items():
+            if isinstance(preset_value, dict):
+                migrated["presets"][_normalize_preset_id(preset_id)] = normalize_preset(preset_value)
+        if not migrated["presets"]:
+            migrated["presets"] = {DEFAULT_PRESET_ID: deepcopy(DEFAULT_PRESET)}
+    else:
+        migrated["presets"] = {DEFAULT_PRESET_ID: normalize_preset(source)}
+
+    active = _normalize_preset_id(source.get("active_preset") or DEFAULT_PRESET_ID)
+    if active not in migrated["presets"]:
+        active = next(iter(migrated["presets"]), DEFAULT_PRESET_ID)
+    migrated["active_preset"] = active
+
+    global_src = source.get("global") if isinstance(source.get("global"), dict) else {}
+    migrated["global"] = normalize_global_config({**source, **global_src})
     migrated["version"] = CONFIG_VERSION
     return migrated
 
@@ -120,35 +171,44 @@ def save_config(config: dict[str, Any]) -> dict[str, Any]:
 
 def save_user_config(payload: dict[str, Any]) -> dict[str, Any]:
     current = load_config()
-    for key in ("super_topic", "cookie", "max_pages", "topic_comment_factor", "pause_seconds", "output_dir"):
+    active = str(current.get("active_preset") or DEFAULT_PRESET_ID)
+    presets = current.setdefault("presets", {})
+    if active not in presets:
+        presets[active] = deepcopy(DEFAULT_PRESET)
+    preset = presets[active]
+    global_config = current.setdefault("global", deepcopy(DEFAULT_GLOBAL))
+
+    for key in ("super_topic", "max_pages", "topic_comment_factor", "likes_weight", "comment_weight", "author_reply_weight", "repost_weight", "pause_seconds", "output_dir", "export_types", "download_images"):
         if key in payload:
-            current[key] = str(payload.get(key) or "").strip()
+            preset[key] = _normalize_preset_value(key, payload.get(key))
+    if "cookie" in payload:
+        global_config["cookie"] = str(payload.get("cookie") or "").strip()
     if "theme" in payload:
         theme = str(payload.get("theme") or "").strip().lower()
         if theme in {"dark", "light"}:
-            current["theme"] = theme
+            global_config["theme"] = theme
     if "advanced_mode" in payload:
-        current["advanced_mode"] = "true" if _as_bool(payload.get("advanced_mode")) else "false"
+        global_config["advanced_mode"] = "true" if _as_bool(payload.get("advanced_mode")) else "false"
     if "log_position" in payload:
-        current["log_position"] = normalize_log_position(payload.get("log_position"))
+        global_config["log_position"] = normalize_log_position(payload.get("log_position"))
     if "cookie_browser" in payload:
-        current["cookie_browser"] = normalize_cookie_browser(payload.get("cookie_browser"))
-    return _strip_config_for_ui(save_config(current))
+        global_config["cookie_browser"] = normalize_cookie_browser(payload.get("cookie_browser"))
+    return _strip_config_for_ui(flatten_active_config(save_config(current)))
 
 
 def clear_config(scope: str) -> dict[str, Any]:
     clean_scope = scope if scope in {"cookie", "all"} else ""
     if not clean_scope:
-        raise ConfigError("清空范围无效。建议使用 scope=cookie 或 scope=all。")
+        raise ConfigError("清空范围无效", "建议使用 scope=cookie 或 scope=all。")
     if clean_scope == "cookie":
         current = load_config()
-        current["cookie"] = ""
+        current.setdefault("global", deepcopy(DEFAULT_GLOBAL))["cookie"] = ""
         save_config(current)
         return app_defaults()
 
     if CONFIG_PATH.exists():
         shutil.copy2(CONFIG_PATH, CONFIG_PATH.with_name("weibo_stats_config.backup.json"))
-    save_config(dict(DEFAULT_CONFIG))
+    save_config(deepcopy(DEFAULT_CONFIG))
     return app_defaults()
 
 
@@ -252,8 +312,12 @@ def build_crawl_config(payload: dict[str, Any]) -> tuple[CrawlConfig, Path]:
         max_pages = int(str(payload.get("max_pages", "80")).strip())
         topic_comment_factor = float(str(payload.get("topic_comment_factor", "1.0")).strip())
         pause_seconds = float(str(payload.get("pause_seconds", "1.0")).strip())
+        likes_weight = float(str(payload.get("likes_weight", "0.3")).strip())
+        comment_weight = float(str(payload.get("comment_weight", "0.5")).strip())
+        author_reply_weight = float(str(payload.get("author_reply_weight", "0.2")).strip())
+        repost_weight = float(str(payload.get("repost_weight", "0.1")).strip())
     except ValueError as err:
-        raise ValueError("最大翻页页数、话题评论系数、请求间隔必须是数字。") from err
+        raise ValueError("最大翻页页数、话题评论系数、请求间隔、评分权重必须是数字。") from err
 
     if max_pages <= 0:
         raise ValueError("最大翻页页数需为正数。")
@@ -274,6 +338,10 @@ def build_crawl_config(payload: dict[str, Any]) -> tuple[CrawlConfig, Path]:
         max_pages=max_pages,
         days_window=days_window,
         topic_comment_factor=topic_comment_factor,
+        likes_weight=likes_weight,
+        comment_weight=comment_weight,
+        author_reply_weight=author_reply_weight,
+        repost_weight=repost_weight,
         pause_seconds=pause_seconds,
         window_start=window_start,
         window_end=window_end,
@@ -290,6 +358,10 @@ def app_defaults() -> dict[str, Any]:
         "cookie": "",
         "max_pages": 80,
         "topic_comment_factor": 1.0,
+        "likes_weight": 0.3,
+        "comment_weight": 0.5,
+        "author_reply_weight": 0.2,
+        "repost_weight": 0.1,
         "pause_seconds": 1.0,
         "window_start": datetime_local_value(window_start),
         "window_end": datetime_local_value(window_end),
@@ -299,9 +371,132 @@ def app_defaults() -> dict[str, Any]:
         "log_position": {"mode": "bubble", "left": 18, "top": 86},
         "cookie_browser": "edge",
         "version": __version__,
+        "config_version": CONFIG_VERSION,
     }
     defaults.update({key: value for key, value in saved.items() if value})
     return defaults
+
+
+def flatten_active_config(config: dict[str, Any]) -> dict[str, Any]:
+    migrated = migrate_config(config)
+    active = str(migrated.get("active_preset") or DEFAULT_PRESET_ID)
+    preset = dict((migrated.get("presets") or {}).get(active) or DEFAULT_PRESET)
+    global_config = dict(migrated.get("global") or DEFAULT_GLOBAL)
+    return {
+        "super_topic": str(preset.get("super_topic") or "").strip(),
+        "cookie": str(global_config.get("cookie") or "").strip(),
+        "max_pages": str(preset.get("max_pages") or "").strip(),
+        "topic_comment_factor": str(preset.get("topic_comment_factor") or "").strip(),
+        "likes_weight": str(preset.get("likes_weight") or "0.3").strip(),
+        "comment_weight": str(preset.get("comment_weight") or "0.5").strip(),
+        "author_reply_weight": str(preset.get("author_reply_weight") or "0.2").strip(),
+        "repost_weight": str(preset.get("repost_weight") or "0.1").strip(),
+        "pause_seconds": str(preset.get("pause_seconds") or "").strip(),
+        "output_dir": str(preset.get("output_dir") or "").strip(),
+        "theme": str(global_config.get("theme") or "").strip(),
+        "advanced_mode": str(global_config.get("advanced_mode") or "").strip(),
+        "log_position": normalize_log_position(global_config.get("log_position")),
+        "cookie_browser": normalize_cookie_browser(global_config.get("cookie_browser")),
+        "export_types": list(preset.get("export_types") or DEFAULT_PRESET["export_types"]),
+        "download_images": bool(preset.get("download_images", True)),
+        "active_preset": active,
+        "preset_name": str(preset.get("name") or active),
+    }
+
+
+def normalize_preset(preset: dict[str, Any]) -> dict[str, Any]:
+    clean = deepcopy(DEFAULT_PRESET)
+    for key in PRESET_KEYS:
+        if key in preset:
+            clean[key] = _normalize_preset_value(key, preset.get(key))
+    clean["name"] = str(clean.get("name") or "未命名预设").strip() or "未命名预设"
+    return clean
+
+
+def normalize_global_config(config: dict[str, Any]) -> dict[str, Any]:
+    clean = deepcopy(DEFAULT_GLOBAL)
+    if "cookie" in config:
+        clean["cookie"] = str(config.get("cookie") or "").strip()
+    if "theme" in config:
+        theme = str(config.get("theme") or "").strip().lower()
+        clean["theme"] = theme if theme in {"dark", "light"} else "dark"
+    if "advanced_mode" in config:
+        clean["advanced_mode"] = "true" if _as_bool(config.get("advanced_mode")) else "false"
+    if "log_position" in config:
+        clean["log_position"] = normalize_log_position(config.get("log_position"))
+    if "cookie_browser" in config:
+        clean["cookie_browser"] = normalize_cookie_browser(config.get("cookie_browser"))
+    return clean
+
+
+def get_presets_payload() -> dict[str, Any]:
+    config = load_config()
+    global_config = dict(config.get("global") or {})
+    cookie = str(global_config.pop("cookie", "") or "")
+    active_config = _strip_config_for_ui(flatten_active_config(config))
+    active_config["cookie"] = ""
+    global_config["has_cookie"] = bool(cookie)
+    global_config["cookie_length"] = len(cookie)
+    return {
+        "active_preset": config.get("active_preset") or DEFAULT_PRESET_ID,
+        "presets": deepcopy(config.get("presets") or {}),
+        "global": global_config,
+        "active_config": active_config,
+    }
+
+
+def save_preset(preset_id: str, preset: dict[str, Any]) -> dict[str, Any]:
+    config = load_config()
+    clean_id = _normalize_preset_id(preset_id or preset.get("id") or preset.get("name") or DEFAULT_PRESET_ID)
+    config.setdefault("presets", {})[clean_id] = normalize_preset(preset)
+    config["active_preset"] = clean_id
+    save_config(config)
+    return get_presets_payload()
+
+
+def delete_preset(preset_id: str) -> dict[str, Any]:
+    config = load_config()
+    presets = config.setdefault("presets", {})
+    clean_id = _normalize_preset_id(preset_id)
+    if clean_id not in presets:
+        raise ConfigError("预设不存在", "请刷新预设列表后重试。")
+    if len(presets) <= 1:
+        raise ConfigError("不能删除最后一个预设", "请先新建或复制一个预设后再删除。")
+    presets.pop(clean_id, None)
+    if config.get("active_preset") == clean_id:
+        config["active_preset"] = next(iter(presets))
+    save_config(config)
+    return get_presets_payload()
+
+
+def activate_preset(preset_id: str) -> dict[str, Any]:
+    config = load_config()
+    clean_id = _normalize_preset_id(preset_id)
+    if clean_id not in config.get("presets", {}):
+        raise ConfigError("预设不存在", "请刷新预设列表后重试。")
+    config["active_preset"] = clean_id
+    save_config(config)
+    return get_presets_payload()
+
+
+def duplicate_preset(source_id: str, new_id: str | None = None, name: str | None = None) -> dict[str, Any]:
+    config = load_config()
+    source = _normalize_preset_id(source_id)
+    presets = config.setdefault("presets", {})
+    if source not in presets:
+        raise ConfigError("源预设不存在", "请刷新预设列表后重试。")
+    target = _normalize_preset_id(new_id or f"{source}_copy")
+    suffix = 2
+    base = target
+    while target in presets:
+        target = f"{base}_{suffix}"
+        suffix += 1
+    copied = deepcopy(presets[source])
+    copied["name"] = str(name or f"{copied.get('name') or source} 副本")
+    presets[target] = normalize_preset(copied)
+    config["active_preset"] = target
+    save_config(config)
+    return get_presets_payload()
 
 
 def _as_bool(value: Any) -> bool:
@@ -342,13 +537,39 @@ def _strip_config_for_ui(config: dict[str, Any]) -> dict[str, Any]:
         "cookie": str(config.get("cookie") or "").strip(),
         "max_pages": str(config.get("max_pages") or "").strip(),
         "topic_comment_factor": str(config.get("topic_comment_factor") or "").strip(),
+        "likes_weight": str(config.get("likes_weight") or "0.3").strip(),
+        "comment_weight": str(config.get("comment_weight") or "0.5").strip(),
+        "author_reply_weight": str(config.get("author_reply_weight") or "0.2").strip(),
+        "repost_weight": str(config.get("repost_weight") or "0.1").strip(),
         "pause_seconds": str(config.get("pause_seconds") or "").strip(),
         "output_dir": str(config.get("output_dir") or "").strip(),
         "theme": str(config.get("theme") or "").strip(),
         "advanced_mode": str(config.get("advanced_mode") or "").strip(),
         "log_position": normalize_log_position(config.get("log_position")),
         "cookie_browser": normalize_cookie_browser(config.get("cookie_browser")),
+        "export_types": list(config.get("export_types") or DEFAULT_PRESET["export_types"]),
+        "download_images": bool(config.get("download_images", True)),
+        "active_preset": str(config.get("active_preset") or DEFAULT_PRESET_ID),
+        "preset_name": str(config.get("preset_name") or "默认预设"),
     }
+
+
+def _normalize_preset_value(key: str, value: Any) -> Any:
+    if key == "export_types":
+        if isinstance(value, list):
+            items = [str(item).strip().lower() for item in value]
+        else:
+            items = [part.strip().lower() for part in str(value or "").split(",")]
+        return [item for item in items if item] or list(DEFAULT_PRESET["export_types"])
+    if key == "download_images":
+        return _as_bool(value)
+    return str(value or "").strip()
+
+
+def _normalize_preset_id(value: Any) -> str:
+    text = str(value or DEFAULT_PRESET_ID).strip().lower()
+    clean = "".join(ch if ch.isalnum() or ch in {"_", "-"} else "_" for ch in text)
+    return clean.strip("_") or DEFAULT_PRESET_ID
 
 
 def _backup_broken_config() -> None:

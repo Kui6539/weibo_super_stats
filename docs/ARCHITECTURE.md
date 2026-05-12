@@ -28,6 +28,19 @@ WebUI -> HTTP API -> CrawlJob -> crawler -> cache -> export -> manifest
 - `/api/cancel-job`
 - `/api/cache-status`
 - `/api/reexport`
+- `/api/history`
+- `/api/history/scan`
+- `/api/history/remove`
+- `/api/history/cache-status`
+- `/api/history/reexport`
+- `/api/presets`
+- `/api/presets/save`
+- `/api/presets/delete`
+- `/api/presets/activate`
+- `/api/presets/duplicate`
+- `/api/output/summary`
+- `/api/output/cleanup-preview`
+- `/api/output/cleanup`
 - `/api/report-preview`
 - `/api/open-result-dir`
 
@@ -41,6 +54,9 @@ WebUI -> HTTP API -> CrawlJob -> crawler -> cache -> export -> manifest
 - `core/errors.py`：统一错误类型和 JSON 错误结构。
 - `core/crawl_types.py`：`CrawlConfig`、`CrawlError`。
 - `core/version.py`：版本号。
+- `core/history.py`：历史任务索引、output 扫描和历史项归一化。
+- `core/recovery.py`：失败原因分类和中文恢复建议。
+- `core/output_cleanup.py`：output 统计、清理预览和确认删除。
 
 ## modules/
 

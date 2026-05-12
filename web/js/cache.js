@@ -14,6 +14,7 @@ window.WeiboCache = {
     let autoPreviewResultKey = "";
     let lastCacheStatusKey = "";
     let lastCacheCanReexport = false;
+    let currentRunDir = "";
 
     function renderResult(job) {
       const result = job?.result;
@@ -39,6 +40,7 @@ window.WeiboCache = {
       controls.openResultDir.classList.remove("hidden");
       controls.openResultDir.disabled = false;
       renderResultList(result);
+      if (result.run_dir) currentRunDir = result.run_dir;
       if (ui.reexportRunDir && result.run_dir && ui.reexportRunDir.value !== result.run_dir) {
         ui.reexportRunDir.value = result.run_dir;
       }
@@ -48,12 +50,13 @@ window.WeiboCache = {
 
       if (result.md && result.md !== autoPreviewResultKey) {
         autoPreviewResultKey = result.md;
-        previewController.load({ auto: true });
+        previewController.load({ auto: true, mdPath: result.md });
       }
     }
 
     function resetPreviewCache() {
       autoPreviewResultKey = "";
+      currentRunDir = "";
     }
 
     function renderResultList(result) {
@@ -148,7 +151,7 @@ window.WeiboCache = {
         return;
       }
       if (event.target.closest("[data-preview-md]")) {
-        previewController.load();
+        previewController.load({ mdPath: autoPreviewResultKey });
         return;
       }
       if (event.target.closest("[data-open-result]")) {
@@ -159,7 +162,7 @@ window.WeiboCache = {
     async function openResultDir() {
       setBusy(controls.openResultDir, true, "正在打开");
       try {
-        const data = await api("/api/open-result-dir", { method: "POST", body: "{}" });
+        const data = await api("/api/open-result-dir", { method: "POST", body: JSON.stringify({ run_dir: currentRunDir }) });
         showToast(`已打开：${data.path || "导出目录"}`);
       } catch (err) {
         appendClientLog(err.message);

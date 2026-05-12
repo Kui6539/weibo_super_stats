@@ -81,7 +81,7 @@ button:disabled {
   position: fixed;
   top: 82px;
   right: 24px;
-  z-index: 42;
+  z-index: 50;
   display: grid;
   gap: 10px;
   width: min(360px, calc(100vw - 32px));

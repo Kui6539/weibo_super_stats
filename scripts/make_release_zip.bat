@@ -3,7 +3,7 @@ setlocal
 chcp 65001 >nul
 cd /d "%~dp0.."
 
-set "VERSION=0.9.1"
+set "VERSION=0.10.0"
 set "ZIP_NAME=weibo_super_stats_v%VERSION%.zip"
 set "DIST_DIR=%CD%\dist"
 set "STAGE=%TEMP%\weibo_super_stats_release_%RANDOM%_%RANDOM%"
@@ -13,14 +13,12 @@ if exist "%STAGE%" rmdir /s /q "%STAGE%"
 mkdir "%STAGE%"
 
 echo [make_release_zip] Preparing release staging directory...
-for %%F in (
-  app.py
-  crawler.py
-  cookie_helper.py
-  requirements.txt
-  点我启动.bat
-) do (
-  if exist "%%F" copy /y "%%F" "%STAGE%\" >nul
+set "WEIBO_STAGE=%STAGE%"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$stage=$env:WEIBO_STAGE; @('app.py','crawler.py','cookie_helper.py','README.md','requirements.txt') | ForEach-Object { if (Test-Path -LiteralPath $_) { Copy-Item -LiteralPath $_ -Destination $stage -Force } }; Get-ChildItem -LiteralPath . -Filter '*.bat' -File | ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $stage -Force }"
+if errorlevel 1 (
+  echo [make_release_zip] Failed to copy root files.
+  rmdir /s /q "%STAGE%"
+  exit /b 1
 )
 
 for %%D in (core server modules export web tests scripts docs) do (

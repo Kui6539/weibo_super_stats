@@ -11,15 +11,20 @@ window.WeiboPreview = {
   }) {
     let currentMarkdown = "";
     let markdownRenderer = null;
+    let currentMdPath = "";
 
     async function load(options = {}) {
       const isAuto = Boolean(options.auto);
+      if (options.mdPath !== undefined) currentMdPath = options.mdPath || "";
       if (!isAuto) {
         setBusy(controls.preview, true, "正在加载");
       }
       setLoading("正在加载 Markdown 预览...");
       try {
-        const data = await api("/api/report-preview");
+        const previewUrl = currentMdPath
+          ? `/api/report-preview?md_path=${encodeURIComponent(currentMdPath)}`
+          : "/api/report-preview";
+        const data = await api(previewUrl);
         currentMarkdown = String(data.markdown || "");
         ui.previewPath.textContent = data.path || "";
         renderIntoPreview(currentMarkdown);
@@ -44,6 +49,7 @@ window.WeiboPreview = {
 
     function reset() {
       currentMarkdown = "";
+      currentMdPath = "";
       hide();
     }
 
@@ -171,7 +177,8 @@ window.WeiboPreview = {
       if (/^(?:[a-zA-Z][a-zA-Z0-9+.-]*:|\/\/)/.test(text) && !/^[a-zA-Z]:[\\/]/.test(text)) {
         return text;
       }
-      return `/api/report-asset?path=${encodeURIComponent(text)}`;
+      const base = `/api/report-asset?path=${encodeURIComponent(text)}`;
+      return currentMdPath ? `${base}&md_path=${encodeURIComponent(currentMdPath)}` : base;
     }
 
     function getErrorMessage(err) {

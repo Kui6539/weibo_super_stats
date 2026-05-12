@@ -46,15 +46,20 @@ window.WeiboProgress = {
         }
       });
 
+      let prevNode = null;
       steps.forEach((step) => {
-        const node = existing.get(step.id);
+        let node = existing.get(step.id);
         if (node) {
           updateItem(node, step, false);
         } else {
-          const created = createItem(step);
-          ui.logBox.appendChild(created);
-          updateItem(created, step, true);
+          node = createItem(step);
+          updateItem(node, step, true);
         }
+        const expectedNext = prevNode ? prevNode.nextSibling : ui.logBox.firstChild;
+        if (node !== expectedNext) {
+          ui.logBox.insertBefore(node, expectedNext);
+        }
+        prevNode = node;
       });
     }
 

@@ -14,10 +14,14 @@ window.WeiboTask = {
     candidatesController,
     cacheController,
     previewController,
+    historyController,
+    outputCleanupController,
   }) {
     let pollTimer = null;
     let pollFailures = 0;
     let currentRenderedJob = null;
+
+    let lastJobActive = false;
 
     function renderJob(job) {
       currentRenderedJob = job;
@@ -30,11 +34,16 @@ window.WeiboTask = {
       const active = ["running", "awaiting_selection", "exporting"].includes(job?.status);
       controls.start.disabled = active;
       controls.cancelJob.classList.toggle("hidden", !active);
-      controls.cancelJob.disabled = !active || Boolean(controls.cancelJob.dataset.busyText);
+      controls.cancelJob.disabled = !active || job?.status === "exporting" || Boolean(controls.cancelJob.dataset.busyText);
       if (!active && pollTimer) {
         clearTimeout(pollTimer);
         pollTimer = null;
       }
+      if (lastJobActive && !active) {
+        historyController?.load();
+        outputCleanupController?.loadSummary();
+      }
+      lastJobActive = active;
     }
 
     async function refreshStatus() {

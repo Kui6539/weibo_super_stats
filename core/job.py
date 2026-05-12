@@ -22,7 +22,9 @@ from core.events import (
     sanitize_event_payload,
     stage_label,
 )
+from core.history import add_history_item_from_manifest
 from core.paths import make_run_dir
+from core.recovery import recovery_suggestions_for_status
 from crawler import (
     WeiboSuperTopicCrawler,
     download_post_images,
@@ -364,6 +366,9 @@ class CrawlJob:
                 "result": visible_job_result(self.result),
                 "error": self.error,
                 "cancel_requested": self.cancel_requested.is_set(),
+                "recovery_suggestions": recovery_suggestions_for_status(
+                    {"status": self.status, "error": self.error, "progress": self.progress}
+                ),
             }
 
     def submit_selection(self, indexes: list[Any]) -> None:
@@ -864,6 +869,10 @@ class CrawlJob:
             )
             manifest = build_manifest(export_ctx, files, warnings=warnings, failed_images=failed_image_count)
             manifest_path = write_manifest(run_dir, manifest)
+            try:
+                add_history_item_from_manifest(run_dir, manifest)
+            except Exception as err:
+                self.add_log(f"历史记录写入失败：{type(err).__name__}: {err}", level="warning", stage="export")
             self._mark_export_result("manifest.json", manifest_path, export_total, export_total)
             result = {
                 "total_posts": summary["total_posts"],

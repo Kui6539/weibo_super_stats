@@ -101,9 +101,18 @@ WebUI 使用原生 JS 模块化文件：
 - `web/js/logs.js`：悬浮日志。
 - `web/js/candidates.js`：人工筛选。
 - `web/js/cache.js`：缓存与重新生成。
+- `web/js/history.js`：历史任务中心、历史缓存检查和历史重新生成。
+- `web/js/presets.js`：配置预设选择、保存、复制、重命名和删除。
+- `web/js/output_cleanup.js`：output 统计、清理预览和确认清理。
 - `web/js/preview.js`：Markdown 预览。
 
 CSS 已拆分到 `web/css/`，`web/styles.css` 作为聚合入口。
+
+## 历史、预设和清理
+
+- 历史索引文件为 `weibo_stats_history.json`，只保存任务摘要，不保存 Cookie、正文和评论。
+- 配置文件 `version=3` 使用 `global + presets` 结构；Cookie 始终在 `global` 中。
+- output 清理必须先调用 preview，再传入 `confirm=true` 才会删除目录。
 
 ## 发布脚本
 

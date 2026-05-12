@@ -8,6 +8,9 @@ window.WeiboEvents = {
     cookieController,
     candidatesController,
     cacheController,
+    presetController,
+    historyController,
+    outputCleanupController,
     previewController,
     logsController,
     preflightController,
@@ -21,6 +24,13 @@ window.WeiboEvents = {
       formController.setAdvancedMode(controls.advancedMode.checked);
       configController.scheduleSave();
     });
+
+    controls.presetSelect?.addEventListener("change", () => presetController.activate());
+    controls.presetNew?.addEventListener("click", () => presetController.createNew());
+    controls.presetSave?.addEventListener("click", () => presetController.saveCurrent());
+    controls.presetDuplicate?.addEventListener("click", () => presetController.duplicate());
+    controls.presetRename?.addEventListener("click", () => presetController.rename());
+    controls.presetDelete?.addEventListener("click", () => presetController.remove());
 
     controls.cookieExpand.addEventListener("click", () => cookieController.expandEditor());
     controls.cookieCollapse.addEventListener("click", () => cookieController.collapseEditor());
@@ -50,12 +60,87 @@ window.WeiboEvents = {
     ui.reexportRunDir.addEventListener("input", () => cacheController.resetCacheStatus());
     ui.resultList.addEventListener("click", (event) => cacheController.handleResultClick(event));
 
+    controls.historySearch?.addEventListener("click", (event) => {
+      event.stopPropagation();
+      toggleCleanupDropdown(false);
+      historyController.openDropdown();
+    });
+    controls.historySearch?.addEventListener("focus", () => {
+      toggleCleanupDropdown(false);
+      historyController.openDropdown();
+    });
+    controls.historyRefresh?.addEventListener("click", () => historyController.load());
+    controls.historyScan?.addEventListener("click", () => historyController.scan());
+    controls.historySearch?.addEventListener("input", () => {
+      historyController.openDropdown();
+      historyController.render();
+    });
+    controls.historyFilter?.addEventListener("change", () => historyController.render());
+    ui.historyList?.addEventListener("click", (event) => historyController.handleClick(event));
+    controls.historyDetailClose?.addEventListener("click", () => historyController.closeDetail());
+    controls.historyDetailPreview?.addEventListener("click", () => historyController.showPreview());
+    controls.historyPreviewClose?.addEventListener("click", () => historyController.closePreview());
+    ui.historyDetailOverlay?.addEventListener("click", (event) => {
+      if (event.target === ui.historyDetailOverlay) historyController.closeDetail();
+    });
+    ui.historyPreviewOverlay?.addEventListener("click", (event) => {
+      if (event.target === ui.historyPreviewOverlay) historyController.closePreview();
+    });
+
+    function toggleCleanupDropdown(force) {
+      const dropdown = ui.cleanupDropdown;
+      if (!dropdown) return;
+      const shouldOpen = typeof force === "boolean" ? force : !dropdown.classList.contains("open");
+      dropdown.classList.toggle("open", shouldOpen);
+      dropdown.setAttribute("aria-hidden", shouldOpen ? "false" : "true");
+      controls.cleanupToggle?.setAttribute("aria-expanded", shouldOpen ? "true" : "false");
+      if (ui.historyBackdrop) {
+        const topbar = ui.historyTopbar?.closest(".topbar");
+        if (topbar) {
+          ui.historyBackdrop.style.top = topbar.getBoundingClientRect().bottom + "px";
+        }
+        ui.historyBackdrop.classList.toggle("visible", shouldOpen);
+      }
+      document.body.style.overflow = shouldOpen ? "hidden" : "";
+    }
+    controls.cleanupToggle?.addEventListener("click", (event) => {
+      event.stopPropagation();
+      historyController.closeDropdown();
+      toggleCleanupDropdown();
+    });
+
+    controls.cleanupSummary?.addEventListener("click", () => outputCleanupController.loadSummary());
+    controls.cleanupPreview?.addEventListener("click", () => outputCleanupController.preview());
+    controls.cleanupRun?.addEventListener("click", () => outputCleanupController.run());
+    [
+      controls.cleanupKeepRecent,
+      controls.cleanupOlderThan,
+      controls.cleanupIncompleteOnly,
+      controls.cleanupIncludeWarnings,
+      controls.cleanupIncludeFailed,
+    ].forEach((control) => {
+      control?.addEventListener("input", () => outputCleanupController.resetPreview());
+      control?.addEventListener("change", () => outputCleanupController.resetPreview());
+    });
+
     controls.preview.addEventListener("click", () => {
       if (ui.previewPanel.getAttribute("aria-hidden") === "true") {
         previewController.load();
       } else {
         previewController.hide();
       }
+    });
+    document.addEventListener("click", (event) => {
+      historyController.handleDocumentClick(event);
+      if (ui.cleanupDropdown?.classList.contains("open")) {
+        if (!controls.cleanupToggle?.contains(event.target) && !ui.cleanupDropdown?.contains(event.target)) {
+          toggleCleanupDropdown(false);
+        }
+      }
+    });
+    ui.historyBackdrop?.addEventListener("click", () => {
+      historyController.closeDropdown();
+      toggleCleanupDropdown(false);
     });
     controls.refreshPreview.addEventListener("click", () => previewController.load({ force: true }));
     controls.copyMarkdown.addEventListener("click", previewController.copy);
@@ -99,8 +184,16 @@ window.WeiboEvents = {
 
     window.addEventListener("keydown", (event) => {
       helpController.handleEscape(event);
+      if (event.key === "Escape" && ui.historyPreviewOverlay?.classList.contains("visible")) {
+        historyController.closePreview();
+        return;
+      }
       if (event.key === "Escape" && ui.preflightOverlay.classList.contains("visible")) {
         preflightController.closeModal();
+      }
+      if (event.key === "Escape") {
+        historyController.closeDropdown();
+        toggleCleanupDropdown(false);
       }
     });
     document.addEventListener("visibilitychange", () => taskController.handleVisibilityChange());
@@ -113,6 +206,10 @@ window.WeiboEvents = {
       fields.maxPages,
       fields.topicCommentFactor,
       fields.pauseSeconds,
+      fields.likesWeight,
+      fields.commentWeight,
+      fields.authorReplyWeight,
+      fields.repostWeight,
       fields.outputDir,
     ].forEach((field) => {
       field.addEventListener("input", () => {

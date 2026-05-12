@@ -13,6 +13,8 @@ output/
 .chrome_cdp_profile/
 dist/
 weibo_stats_config.json
+weibo_stats_history.json
+weibo_stats_history.broken.json
 *.log
 
 .env

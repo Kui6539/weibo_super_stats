@@ -35,13 +35,17 @@ def calculate_score(post: dict, config: dict | Any) -> ScoreDetail:
     author_replies = min(_to_int(post.get("author_replies")), total_comments)
     non_author_comments = max(0, total_comments - author_replies)
     comment_factor = max(0.5, _config_float(config, "topic_comment_factor", 1.0))
+    likes_weight = _config_float(config, "likes_weight", 0.3)
+    comment_weight = _config_float(config, "comment_weight", 0.5)
+    author_reply_weight = _config_float(config, "author_reply_weight", 0.2)
+    repost_weight = _config_float(config, "repost_weight", 0.1)
     ref_now = _config_value(config, "window_end", None)
     publish_dt = _config_value(post, "publish_dt", None)
 
-    likes_score = likes * 0.3
-    non_author_comment_score = non_author_comments * 0.5 * comment_factor
-    author_reply_score = author_replies * 0.2
-    repost_score = reposts * 0.1
+    likes_score = likes * likes_weight
+    non_author_comment_score = non_author_comments * comment_weight * comment_factor
+    author_reply_score = author_replies * author_reply_weight
+    repost_score = reposts * repost_weight
     base_score = likes_score + non_author_comment_score + author_reply_score + repost_score
     time_weight = calculate_time_weight(publish_dt if isinstance(publish_dt, datetime) else None, ref_now)
     final_score = base_score * time_weight

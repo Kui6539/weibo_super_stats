@@ -346,7 +346,7 @@ class WeiboSuperTopicCrawler:
         comments = int(post.get("comments", 0) or 0)
         reposts = int(post.get("reposts", 0) or 0)
         comment_factor = max(0.5, float(config.topic_comment_factor))
-        base = likes * 0.3 + comments * 0.5 * comment_factor + reposts * 0.1
+        base = likes * config.likes_weight + comments * config.comment_weight * comment_factor + reposts * config.repost_weight
         publish_dt = parse_publish_datetime(str(post.get("publish_time") or ""))
         return base * _calc_time_weight(publish_dt, ref_now)
 

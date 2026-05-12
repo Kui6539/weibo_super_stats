@@ -68,6 +68,10 @@
   grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
 }
 
+.grid.four {
+  grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+}
+
 .button-row {
   display: flex;
   flex-wrap: wrap;
@@ -516,6 +520,7 @@
 @media (max-width: 620px) {
 .grid.two,
   .grid.three,
+  .grid.four,
   .result-row {
     grid-template-columns: 1fr;
   }

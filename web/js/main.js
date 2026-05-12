@@ -8,6 +8,10 @@ const fields = {
   maxPages: $("maxPages"),
   topicCommentFactor: $("topicCommentFactor"),
   pauseSeconds: $("pauseSeconds"),
+  likesWeight: $("likesWeight"),
+  commentWeight: $("commentWeight"),
+  authorReplyWeight: $("authorReplyWeight"),
+  repostWeight: $("repostWeight"),
   outputDir: $("outputDir"),
 };
 
@@ -49,6 +53,28 @@ const controls = {
   preflightClose: $("preflightCloseBtn"),
   preflightCancel: $("preflightCancelBtn"),
   preflightProceed: $("preflightProceedBtn"),
+  presetSelect: $("presetSelect"),
+  presetNew: $("presetNewBtn"),
+  presetSave: $("presetSaveBtn"),
+  presetDuplicate: $("presetDuplicateBtn"),
+  presetRename: $("presetRenameBtn"),
+  presetDelete: $("presetDeleteBtn"),
+  historyRefresh: $("historyRefreshBtn"),
+  historyScan: $("historyScanBtn"),
+  historySearch: $("historySearch"),
+  historyFilter: $("historyFilter"),
+  historyDetailClose: $("historyDetailCloseBtn"),
+  historyDetailPreview: $("historyDetailPreviewBtn"),
+  historyPreviewClose: $("historyPreviewCloseBtn"),
+  cleanupToggle: $("cleanupToggleBtn"),
+  cleanupSummary: $("cleanupSummaryBtn"),
+  cleanupPreview: $("cleanupPreviewBtn"),
+  cleanupRun: $("cleanupRunBtn"),
+  cleanupKeepRecent: $("cleanupKeepRecent"),
+  cleanupOlderThan: $("cleanupOlderThan"),
+  cleanupIncompleteOnly: $("cleanupIncompleteOnly"),
+  cleanupIncludeWarnings: $("cleanupIncludeWarnings"),
+  cleanupIncludeFailed: $("cleanupIncludeFailed"),
 };
 
 const ui = {
@@ -90,6 +116,21 @@ const ui = {
   helpContent: $("helpContent"),
   helpPath: $("helpPath"),
   helpClose: $("helpCloseBtn"),
+  historyTopbar: $("historyTopbar"),
+  historyDropdown: $("historyDropdown"),
+  historyBackdrop: $("historyBackdrop"),
+  historyTopbarCount: $("historyTopbarCount"),
+  historySummary: $("historySummary"),
+  historyList: $("historyList"),
+  historyDetailOverlay: $("historyDetailOverlay"),
+  historyDetailMeta: $("historyDetailMeta"),
+  historyDetailContent: $("historyDetailContent"),
+  historyPreviewOverlay: $("historyPreviewOverlay"),
+  historyPreviewContent: $("historyPreviewContent"),
+  historyPreviewPath: $("historyPreviewPath"),
+  cleanupDropdown: $("cleanupDropdown"),
+  cleanupSummary: $("cleanupSummary"),
+  cleanupPreviewBox: $("cleanupPreviewBox"),
 };
 
 const setBusy = (...args) => window.WeiboUtils.setBusy(...args);
@@ -203,6 +244,41 @@ const cacheController = window.WeiboCache.createController({
   previewController,
 });
 
+const presetController = window.WeiboPresets.createController({
+  fields,
+  controls,
+  api,
+  setBusy,
+  showToast,
+  formController,
+  scheduleConfigSave,
+});
+
+const historyController = window.WeiboHistory.createController({
+  ui,
+  controls,
+  api,
+  setBusy,
+  escapeHtml,
+  escapeAttr,
+  copyText,
+  showToast,
+  appendClientLog,
+  progressController,
+  previewController,
+  renderJob: (job) => taskController?.renderJob(job),
+});
+
+const outputCleanupController = window.WeiboOutputCleanup.createController({
+  ui,
+  controls,
+  api,
+  setBusy,
+  escapeHtml,
+  showToast,
+  appendClientLog,
+});
+
 const helpController = window.WeiboHelp.createController({
   ui,
   api,
@@ -260,6 +336,9 @@ taskController = window.WeiboTask.createController({
   logsController,
   candidatesController,
   cacheController,
+  presetController,
+  historyController,
+  outputCleanupController,
   previewController,
 });
 
@@ -312,6 +391,9 @@ window.WeiboEvents.bind({
   cookieController,
   candidatesController,
   cacheController,
+  presetController,
+  historyController,
+  outputCleanupController,
   previewController,
   logsController,
   preflightController,
@@ -326,6 +408,9 @@ configController
   .initDefaults()
   .then(async () => {
     preflightController.restoreCache();
+    await presetController.load();
+    await historyController.load();
+    await outputCleanupController.loadSummary();
     await taskController.refreshStatus();
     await helpController.load();
   })

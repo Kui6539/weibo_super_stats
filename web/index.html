@@ -9,9 +9,75 @@
   <body>
     <div id="particleLayer" class="particle-layer" aria-hidden="true"></div>
     <header class="topbar">
-      <div>
+      <div class="topbar-title">
         <h1>微博超话周报工具</h1>
         <p id="saveState" class="muted">配置自动保存</p>
+      </div>
+      <div id="historyTopbar" class="history-topbar">
+        <div class="history-searchbox">
+          <input
+            id="historySearch"
+            type="search"
+            placeholder="搜索历史任务，点击展开"
+            autocomplete="off"
+            aria-label="搜索历史任务"
+            aria-expanded="false"
+            aria-controls="historyDropdown"
+          />
+          <span id="historyTopbarCount" class="history-count">0</span>
+        </div>
+        <button id="cleanupToggleBtn" type="button" class="cleanup-toggle" aria-label="输出清理" aria-expanded="false" aria-controls="cleanupDropdown">
+          <span aria-hidden="true">🗑</span>
+        </button>
+        <section id="historyDropdown" class="history-dropdown" aria-hidden="true" aria-label="历史任务">
+          <div class="section-title compact">
+            <div>
+              <h2>历史任务</h2>
+              <span id="historySummary" class="muted">尚未加载历史</span>
+            </div>
+            <div class="history-actions">
+              <button id="historyRefreshBtn" type="button" class="secondary small-button">刷新历史</button>
+              <button id="historyScanBtn" type="button" class="secondary small-button">扫描 output</button>
+            </div>
+          </div>
+          <div class="history-filterbar compact-filter">
+            <select id="historyFilter" aria-label="历史筛选">
+              <option value="all">全部</option>
+              <option value="reexport">可重新生成</option>
+              <option value="warning">有警告</option>
+              <option value="failed">失败任务</option>
+              <option value="completed">已完成任务</option>
+            </select>
+          </div>
+          <div id="historyList" class="history-list"></div>
+        </section>
+        <section id="cleanupDropdown" class="cleanup-dropdown" aria-hidden="true" aria-label="输出清理">
+          <div class="section-title compact">
+            <div>
+              <h2>输出清理</h2>
+              <span id="cleanupSummary" class="muted">仅预览，不会自动删除</span>
+            </div>
+            <button id="cleanupSummaryBtn" type="button" class="secondary small-button">扫描 output</button>
+          </div>
+          <div class="cleanup-grid">
+            <label class="field">
+              <span>保留最近 N 个</span>
+              <input id="cleanupKeepRecent" type="number" min="0" step="1" value="5" />
+            </label>
+            <label class="field">
+              <span>删除超过天数</span>
+              <input id="cleanupOlderThan" type="number" min="0" step="1" placeholder="不限制" />
+            </label>
+            <label class="checkbox-line"><input id="cleanupIncompleteOnly" type="checkbox" /> 只清理不可重新生成目录</label>
+            <label class="checkbox-line"><input id="cleanupIncludeWarnings" type="checkbox" /> 允许清理有警告目录</label>
+            <label class="checkbox-line"><input id="cleanupIncludeFailed" type="checkbox" /> 允许清理失败/取消目录</label>
+          </div>
+          <div class="button-row">
+            <button id="cleanupPreviewBtn" type="button" class="secondary">预览清理</button>
+            <button id="cleanupRunBtn" type="button" class="secondary danger-button" disabled>确认清理</button>
+          </div>
+          <div id="cleanupPreviewBox" class="cleanup-preview muted">尚未生成清理预览</div>
+        </section>
       </div>
       <div class="topbar-actions">
         <button id="themeToggleBtn" type="button" class="secondary theme-toggle" aria-label="切换为亮色主题">
@@ -23,6 +89,7 @@
         <div class="status-pill" id="statusPill">未开始</div>
       </div>
     </header>
+    <div id="historyBackdrop" class="history-backdrop" aria-hidden="true"></div>
 
     <main id="layout" class="layout">
       <div class="work-column">
@@ -33,6 +100,20 @@
               <input id="advancedModeToggle" type="checkbox" />
               <span>高级模式</span>
             </label>
+          </div>
+
+          <div class="preset-bar" aria-label="配置预设">
+            <label class="field preset-select-field">
+              <span>配置预设</span>
+              <select id="presetSelect"></select>
+            </label>
+            <div class="preset-actions">
+              <button id="presetNewBtn" type="button" class="secondary small-button">新建</button>
+              <button id="presetSaveBtn" type="button" class="secondary small-button">保存当前</button>
+              <button id="presetDuplicateBtn" type="button" class="secondary small-button">复制</button>
+              <button id="presetRenameBtn" type="button" class="secondary small-button">重命名</button>
+              <button id="presetDeleteBtn" type="button" class="secondary small-button danger-button">删除</button>
+            </div>
           </div>
 
           <label class="field wide">
@@ -140,6 +221,28 @@
             <label class="field">
               <span>请求间隔</span>
               <input id="pauseSeconds" type="number" min="0" step="0.1" />
+            </label>
+            </div>
+            <div class="section-title compact advanced-title">
+              <h2>评分权重</h2>
+              <span class="muted">调整各指标在评分中的比重</span>
+            </div>
+            <div class="grid four">
+            <label class="field">
+              <span>点赞权重</span>
+              <input id="likesWeight" type="number" min="0" step="0.05" />
+            </label>
+            <label class="field">
+              <span>评论权重</span>
+              <input id="commentWeight" type="number" min="0" step="0.05" />
+            </label>
+            <label class="field">
+              <span>作者回复权重</span>
+              <input id="authorReplyWeight" type="number" min="0" step="0.05" />
+            </label>
+            <label class="field">
+              <span>转发权重</span>
+              <input id="repostWeight" type="number" min="0" step="0.05" />
             </label>
             </div>
           </div>
@@ -297,10 +400,40 @@
       </section>
     </div>
 
+    <div id="historyDetailOverlay" class="history-detail-overlay" aria-hidden="true">
+      <section class="history-detail-dialog" role="dialog" aria-modal="true" aria-labelledby="historyDetailTitle">
+        <div class="side-toolbar">
+          <div>
+            <h2 id="historyDetailTitle">历史详情</h2>
+            <p id="historyDetailMeta" class="muted"></p>
+          </div>
+          <div class="history-detail-toolbar-actions">
+            <button id="historyDetailPreviewBtn" type="button" class="secondary small-button">Markdown 预览</button>
+            <button id="historyDetailCloseBtn" type="button" class="secondary">关闭</button>
+          </div>
+        </div>
+        <div id="historyDetailContent" class="history-detail-content"></div>
+      </section>
+    </div>
+
+    <div id="historyPreviewOverlay" class="history-preview-overlay" aria-hidden="true">
+      <section class="history-preview-dialog" role="dialog" aria-modal="true" aria-labelledby="historyPreviewTitle">
+        <div class="side-toolbar">
+          <div>
+            <h2 id="historyPreviewTitle">Markdown 预览</h2>
+            <p id="historyPreviewPath" class="muted"></p>
+          </div>
+          <button id="historyPreviewCloseBtn" type="button" class="secondary">关闭</button>
+        </div>
+        <div id="historyPreviewContent" class="history-preview-content markdown-body"></div>
+      </section>
+    </div>
+
     <script src="/js/utils.js" defer></script>
     <script src="/js/api.js" defer></script>
     <script src="/js/state.js" defer></script>
     <script src="/js/config.js" defer></script>
+    <script src="/js/presets.js" defer></script>
     <script src="/js/form.js" defer></script>
     <script src="/js/theme.js" defer></script>
     <script src="/js/particles.js" defer></script>
@@ -312,6 +445,8 @@
     <script src="/vendor/markdown-it.min.js" defer></script>
     <script src="/js/preview.js" defer></script>
     <script src="/js/cache.js" defer></script>
+    <script src="/js/history.js" defer></script>
+    <script src="/js/output_cleanup.js" defer></script>
     <script src="/js/help.js" defer></script>
     <script src="/js/task.js" defer></script>
     <script src="/js/events.js" defer></script>
