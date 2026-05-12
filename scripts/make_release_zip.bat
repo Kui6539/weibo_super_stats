@@ -3,7 +3,7 @@ setlocal
 chcp 65001 >nul
 cd /d "%~dp0.."
 
-set "VERSION=0.9.0"
+set "VERSION=0.9.1"
 set "ZIP_NAME=weibo_super_stats_v%VERSION%.zip"
 set "DIST_DIR=%CD%\dist"
 set "STAGE=%TEMP%\weibo_super_stats_release_%RANDOM%_%RANDOM%"

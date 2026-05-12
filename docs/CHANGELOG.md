@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.9.1 - Unreleased
+
+### Changed
+
+- 文档集中到 `docs/`，README 引用路径同步更新。
+- 发布打包脚本改为包含 `docs/` 目录。
+
+### Fixed
+
+- Markdown 预览打开时避免在桌面端触发页面自动滚动，防止抓取设置区域上移。
+- 帮助文档读取路径指向 `docs/Cookie获取简短教程.md`。
+
 ## v0.9.0 - Unreleased
 
 ### Added

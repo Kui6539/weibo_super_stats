@@ -24,7 +24,7 @@ window.WeiboPreview = {
         ui.previewPath.textContent = data.path || "";
         renderIntoPreview(currentMarkdown);
         show();
-        if (!isAuto || window.innerWidth <= 980) {
+        if (window.innerWidth <= 980) {
           ui.previewPanel.scrollIntoView({ behavior: "smooth", block: "start" });
         }
       } catch (err) {
