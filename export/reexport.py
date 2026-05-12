@@ -8,20 +8,15 @@ from typing import Any
 
 from core.cache import CacheStore, read_manifest, sanitize_for_cache
 from core.errors import ReexportCacheMissingError, ReexportError
-from crawler import (
-    analyze_active_period,
-    build_comment_leaderboards,
-    build_report_title,
-    build_summary,
-    export_posts_csv,
-    export_posts_xlsx,
-    export_weekly_report_docx,
-    export_weekly_report_md,
-    export_weekly_report_sum_docx,
-    write_summary_txt,
-)
 from export.context import ExportContext
+from export.csv_exporter import export_posts_csv
+from export.docx_exporter import export_docx, export_weekly_report_sum_docx
+from export.excel_exporter import export_excel
 from export.manifest import build_manifest, write_manifest
+from export.markdown_exporter import export_weekly_report_md
+from export.summary_exporter import analyze_active_period, build_summary, write_summary_txt
+from modules.comments.ranking import build_comment_leaderboards
+from modules.topic import build_report_title
 
 DEFAULT_EXPORT_TYPES = {"markdown", "docx", "excel", "csv", "summary"}
 
@@ -76,11 +71,22 @@ def reexport_from_cache(
         "summary": run_dir / "weibo_summary.txt",
         "images": run_dir / "images",
     }
+    ctx = ExportContext(
+        run_dir=run_dir,
+        selected_posts=selected_posts,
+        all_posts=posts_all,
+        config=export_config | {"leaderboards": leaderboards},
+        stats=summary,
+        images_manifest=images_manifest if isinstance(images_manifest, dict) else None,
+        warnings=warnings,
+        failed_images=list((images_manifest or {}).get("failed", [])) if isinstance(images_manifest, dict) else [],
+        reexport=True,
+    )
 
     try:
         _remove_legacy_report_files(run_dir)
         if "excel" in export_set or "xlsx" in export_set:
-            export_posts_xlsx(selected_posts, files["xlsx"])
+            export_excel(ctx, files["xlsx"])
         if "csv" in export_set:
             export_posts_csv(selected_posts, files["csv"])
         if "summary" in export_set:
@@ -94,13 +100,7 @@ def reexport_from_cache(
             )
         if "docx" in export_set:
             _remove_generated_docx(run_dir)
-            docx_paths = export_weekly_report_docx(
-                selected_posts,
-                run_dir / "weekly_report.docx",
-                title=report_title,
-                leaderboards=leaderboards,
-                preselected=True,
-            )
+            docx_paths = export_docx(ctx, run_dir / "weekly_report.docx")
             files["docx"] = docx_paths
             files["docx_sum"] = export_weekly_report_sum_docx(
                 selected_posts,
@@ -108,6 +108,7 @@ def reexport_from_cache(
                 title=report_title,
                 leaderboards=leaderboards,
                 preselected=True,
+                ctx=ctx,
             )
         if "markdown" in export_set:
             export_weekly_report_md(
@@ -127,20 +128,11 @@ def reexport_from_cache(
         previous_files = previous_manifest.get("files") if isinstance(previous_manifest, dict) else {}
         files["docx"] = [run_dir / path for path in (previous_files or {}).get("docx", []) or []]
 
-    ctx = ExportContext(
-        run_dir=run_dir,
-        selected_posts=selected_posts,
-        all_posts=posts_all,
-        config=export_config,
-        stats=summary,
-        images_manifest=images_manifest if isinstance(images_manifest, dict) else None,
-        reexport=True,
-    )
     previous = read_manifest(run_dir, {}) or {}
     manifest = build_manifest(
         ctx,
         files,
-        warnings=warnings,
+        warnings=[],
         failed_images=len((images_manifest or {}).get("failed", [])) if isinstance(images_manifest, dict) else 0,
         previous=previous,
         status="reexported",

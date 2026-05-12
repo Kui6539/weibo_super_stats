@@ -1,5 +1,11 @@
 ﻿from __future__ import annotations
 
+"""Crawler compatibility layer.
+
+已迁移：评分/过滤、评论榜单、Markdown/CSV/summary、DOCX、XLSX 等低风险导出入口。
+暂留：超话抓取调度、HTML 解析、长正文补全、评论请求调度、图片下载调度和部分历史辅助函数。
+"""
+
 import hashlib
 import heapq
 import json
@@ -10,106 +16,70 @@ from collections import Counter
 from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import suppress
-from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, cast
-from urllib.parse import parse_qsl
+from typing import Any
 
 import requests
 from bs4 import BeautifulSoup, Tag
-from docx import Document as create_doc
-from docx.document import Document as DocxDocument
-from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
-from docx.opc.constants import RELATIONSHIP_TYPE as RT
-from docx.oxml import OxmlElement
-from docx.oxml.ns import qn
-from docx.shared import Pt, RGBColor
-from openpyxl import Workbook
-from openpyxl.drawing.image import Image as XLImage
-from openpyxl.styles import Alignment, Font
-from openpyxl.utils import get_column_letter
-from openpyxl.worksheet.worksheet import Worksheet
-
+from core.crawl_types import CrawlConfig, CrawlError
+from export.csv_exporter import DEFAULT_EXPORT_COLUMN_MAP
 from export.csv_exporter import build_export_row as _export_build_row
 from export.csv_exporter import export_posts_csv as _export_posts_csv
+from export.docx_exporter import export_weekly_report_docx as _export_weekly_report_docx
+from export.docx_exporter import export_weekly_report_sum_docx as _export_weekly_report_sum_docx
+from export.excel_exporter import export_posts_xlsx as _export_posts_xlsx
 from export.markdown_exporter import export_weekly_report_md as _export_weekly_report_md
+from export.report_helpers import clean_report_text as _report_clean_report_text
+from export.report_helpers import format_hot_comment_text as _report_format_hot_comment_text
+from export.report_helpers import format_posts_date_range as _report_format_posts_date_range
+from export.report_helpers import iter_report_comments as _report_iter_report_comments
+from export.report_helpers import replace_unicode_emoji as _report_replace_unicode_emoji
+from export.report_helpers import replace_weibo_emoticons as _report_replace_weibo_emoticons
+from export.report_helpers import select_weekly_posts as _report_select_weekly_posts
+from export.report_helpers import simplify_hot_comment as _report_simplify_hot_comment
+from export.report_helpers import strip_url_like_text as _report_strip_url_like_text
+from export.report_helpers import to_rel_path as _report_to_rel_path
+from export.summary_exporter import analyze_active_period as _export_analyze_active_period
 from export.summary_exporter import build_summary as _export_build_summary
 from export.summary_exporter import calc_date_distribution_fit as _export_calc_date_distribution_fit
 from export.summary_exporter import write_summary_txt as _export_write_summary_txt
+from modules.comments.ranking import build_comment_leaderboards as _comments_build_comment_leaderboards
 from modules.crawler_filters import should_exclude_post
 from modules.crawler_scoring import calculate_score
+from modules.images.url_extract import collect_comment_image_urls as _image_collect_comment_image_urls
+from modules.images.url_extract import collect_top_comment_image_urls as _image_collect_top_comment_image_urls
+from modules.images.url_extract import dedup_image_urls as _image_dedup_image_urls
+from modules.images.url_extract import dedup_keep_order as _image_dedup_keep_order
+from modules.images.url_extract import extract_sinaimg_host as _image_extract_sinaimg_host
+from modules.images.url_extract import extract_status_image_urls as _image_extract_status_image_urls
+from modules.images.url_extract import extract_urls_from_data_node as _image_extract_urls_from_data_node
+from modules.images.url_extract import guess_image_ext as _image_guess_image_ext
+from modules.images.url_extract import image_signature as _image_image_signature
+from modules.images.url_extract import looks_like_image_url as _image_looks_like_image_url
+from modules.images.url_extract import split_multi_urls as _image_split_multi_urls
+from modules.images.url_extract import split_url_candidates as _image_split_url_candidates
+from modules.images.url_extract import to_original_pic_url as _image_to_original_pic_url
 from modules.text_cleaning import clean_topic_tags, collapse_blank_lines, normalize_weibo_text, strip_html_text
 from modules.time_utils import normalize_date as _normalize_date
 from modules.time_utils import parse_weibo_time
-from modules.weibo_url import normalize_image_url, parse_super_topic_id as _parse_super_topic_id, to_absolute_url
+from modules.topic import build_report_title as _topic_build_report_title
+from modules.topic import extract_super_topic_name as _topic_extract_super_topic_name
+from modules.topic import normalize_super_topic_name as _topic_normalize_super_topic_name
+from modules.weibo_html_parser import extract_feed_html_from_page as _html_extract_feed_html_from_page
+from modules.weibo_html_parser import extract_original_image_urls as _html_extract_original_image_urls
+from modules.weibo_html_parser import is_inside_forwarded_content as _html_is_inside_forwarded_content
+from modules.weibo_html_parser import parse_count as _html_parse_count
+from modules.weibo_html_parser import parse_fm_view_objects as _html_parse_fm_view_objects
+from modules.weibo_html_parser import parse_posts_from_html as _html_parse_posts_from_html
+from modules.weibo_url import parse_super_topic_id as _parse_super_topic_id, to_absolute_url
 
-FM_VIEW_MARKER = "FM.view("
 COMMENTS_API_URL = "https://weibo.com/ajax/statuses/buildComments"
 COMMENT_ANALYSIS_MIN_ROWS = 60
 COMMENT_ANALYSIS_RATIO = 0.36
 FINAL_COMMENT_ANALYSIS_LIMIT = 45
-FORWARDED_NODE_TYPES = {
-    "feed_list_forwardContent",
-    "feed_list_forwardContent_full",
-}
-FORWARDED_CLASS_NAMES = {
-    "WB_feed_expand",
-    "WB_feed_expand_v2",
-    "WB_expand",
-    "WB_feed_expand_media",
-}
-EXPORT_COLUMN_MAP = [
-    ("user_name", "作者昵称"),
-    ("publish_time", "帖子发送时间"),
-    ("post_url", "帖子链接"),
-    ("original_image_urls", "原图链接"),
-    ("image_local_paths", "图片本地路径"),
-    ("content", "帖子内容"),
-    ("reposts", "转发数"),
-    ("comments", "评论总数"),
-    ("likes", "点赞数"),
-    ("non_author_comments", "非楼主评论数"),
-    ("author_replies", "楼主回复数"),
-    ("topic_comment_factor", "话题评论系数"),
-    ("score", "帖子分数"),
-    ("engagement_total", "互动总量"),
-    ("top_comment_1", "热评1(按点赞)"),
-    ("top_comment_2", "热评2(按点赞)"),
-    ("top_comment_3", "热评3(按点赞)"),
-]
-EMBED_IMAGE_HEADER_PREFIX = "图片预览"
-WIDE_COLUMNS = {
-    "帖子发送时间": 20,
-    "帖子链接": 45,
-    "原图链接": 80,
-    "图片本地路径": 80,
-    "帖子内容": 60,
-    "热评1(按点赞)": 65,
-    "热评2(按点赞)": 65,
-    "热评3(按点赞)": 65,
-}
+EXPORT_COLUMN_MAP = DEFAULT_EXPORT_COLUMN_MAP
 DOCX_SIZE_LIMIT_BYTES = 10 * 1000 * 1000
-
-
-class CrawlError(Exception):
-    pass
-
-
-@dataclass
-class CrawlConfig:
-    super_topic: str
-    cookie: str
-    max_pages: int = 30
-    pause_seconds: float = 1.0
-    days_window: int = 7
-    topic_comment_factor: float = 1.0
-    comment_page_limit: int = 8
-    text_workers: int = 6
-    comment_workers: int = 6
-    window_start: datetime | None = None
-    window_end: datetime | None = None
-    carryover_hours: int = 0
 
 
 class WeiboSuperTopicCrawler:
@@ -901,109 +871,26 @@ def parse_super_topic_id(input_text: str) -> str | None:
 
 
 def build_report_title(topic_name: str | None = None, super_topic: str | None = None) -> str:
-    name = normalize_super_topic_name(topic_name or "")
-    if not name:
-        name = normalize_super_topic_name(str(super_topic or ""))
-    return f"{name or '微博'}超话周报"
+    return _topic_build_report_title(topic_name, super_topic)
 
 
 def normalize_super_topic_name(value: str) -> str:
-    raw = _clean_text(str(value or ""))
-    if not raw:
-        return ""
-    raw = raw.strip().strip("#")
-    raw = re.sub(r"^https?://\S+$", "", raw, flags=re.I)
-    raw = re.sub(r"^100808[0-9a-fA-F]+$", "", raw)
-    raw = re.sub(r"\s*[-_｜|].*$", "", raw)
-    raw = re.sub(r"(?:微博)?超话(?:社区|详情|首页|主页)?$", "", raw)
-    raw = re.sub(r"(?:的)?微博(?:主页)?$", "", raw)
-    raw = raw.strip(" #　-—_｜|：:")
-    if not raw or raw.lower() in {"weibo", "m.weibo.cn", "weibo.com"}:
-        return ""
-    return raw[:40]
+    return _topic_normalize_super_topic_name(value)
 
 
 def extract_super_topic_name(page_html: str, fallback: str | None = None) -> str:
-    html = str(page_html or "")
-    candidates: list[str] = []
-
-    title_match = re.search(r"<title[^>]*>(.*?)</title>", html, flags=re.I | re.S)
-    if title_match:
-        candidates.append(_html_to_text(title_match.group(1)))
-
-    for pattern in (
-        r'<meta[^>]+(?:property|name)=["\'](?:og:title|keywords|description)["\'][^>]+content=["\']([^"\']+)["\']',
-        r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+(?:property|name)=["\'](?:og:title|keywords|description)["\']',
-    ):
-        candidates.extend(_html_to_text(match.group(1)) for match in re.finditer(pattern, html, flags=re.I | re.S))
-
-    topic_match = re.search(r"#?\s*([^#<>{}\"'，,。；;｜|]{1,40}?)\s*超话", html)
-    if topic_match:
-        candidates.append(topic_match.group(1))
-
-    candidates.append(str(fallback or ""))
-
-    for candidate in candidates:
-        name = normalize_super_topic_name(candidate)
-        if name:
-            return name
-    return ""
+    return _topic_extract_super_topic_name(page_html, fallback)
 
 
 def extract_feed_html_from_page(page_html: str) -> str:
-    objects = parse_fm_view_objects(page_html)
-    if not objects:
-        raise CrawlError("页面中未找到 FM.view 数据块，无法解析帖子列表。")
-
-    for obj in objects:
-        domid = str(obj.get("domid", ""))
-        html = obj.get("html")
-        if (
-            domid.startswith("Pl_Core_MixedFeed__")
-            and isinstance(html, str)
-            and "feed_list_item" in html
-        ):
-            return html
-
-    html_candidates = [
-        obj.get("html", "")
-        for obj in objects
-        if isinstance(obj.get("html"), str) and "feed_list_item" in obj.get("html", "")
-    ]
-    if html_candidates:
-        return max(html_candidates, key=len)
-
-    raise CrawlError("页面结构已变化：未在 FM.view 中找到帖子列表 HTML。")
+    try:
+        return _html_extract_feed_html_from_page(page_html)
+    except ValueError as err:
+        raise CrawlError(str(err)) from err
 
 
 def parse_fm_view_objects(page_html: str) -> list[dict]:
-    results: list[dict] = []
-    cursor = 0
-    while True:
-        idx = page_html.find(FM_VIEW_MARKER, cursor)
-        if idx < 0:
-            break
-
-        payload_start = idx + len(FM_VIEW_MARKER)
-        payload_start = _skip_space(page_html, payload_start)
-        if payload_start >= len(page_html) or page_html[payload_start] != "{":
-            cursor = payload_start + 1
-            continue
-
-        payload_end = _find_json_object_end(page_html, payload_start)
-        if payload_end < 0:
-            cursor = payload_start + 1
-            continue
-
-        payload = page_html[payload_start : payload_end + 1]
-        try:
-            obj = json.loads(payload)
-            if isinstance(obj, dict):
-                results.append(obj)
-        except Exception:
-            pass
-        cursor = payload_end + 1
-    return results
+    return _html_parse_fm_view_objects(page_html)
 
 
 def _skip_space(text: str, start: int) -> int:
@@ -1038,53 +925,7 @@ def _find_json_object_end(text: str, obj_start: int) -> int:
 
 
 def parse_posts_from_html(html: str) -> list[dict]:
-    try:
-        soup = BeautifulSoup(html, "lxml")
-    except Exception:
-        soup = BeautifulSoup(html, "html.parser")
-    items = [item for item in soup.select("div[action-type='feed_list_item']") if not _is_nested_feed_item(item)]
-    posts: list[dict] = []
-    for item in items:
-        post_id = item.get("mid") or item.get("data-mid") or ""
-        user_name = _extract_user_name(item)
-        author_id = _extract_author_id(item)
-        publish_time = _extract_publish_time(item)
-        post_url = _extract_post_url(item)
-        original_image_urls = _extract_original_image_urls(item)
-        content = _strip_specific_topic_tags_preserve(_remove_expand_hint_preserve(_extract_content(item)))
-        has_video = _extract_has_video(item)
-        reposts = _extract_action_count(item, ["feed_list_forward", "fl_forward"])
-        comments = _extract_action_count(item, ["feed_list_comment", "fl_comment"])
-        likes = _extract_action_count(item, ["feed_list_like", "fl_like"])
-
-        posts.append(
-            {
-                "post_id": str(post_id),
-                "author_id": str(author_id),
-                "user_name": user_name,
-                "publish_time": publish_time,
-                "post_url": post_url,
-                "original_image_urls": " | ".join(original_image_urls),
-                "image_count": len(original_image_urls),
-                "downloaded_image_count": 0,
-                "image_local_paths": "",
-                "content": content,
-                "has_video": has_video,
-                "reposts": reposts,
-                "comments": comments,
-                "likes": likes,
-                "non_author_comments": 0,
-                "author_replies": 0,
-                "topic_comment_factor": 1.0,
-                "score": 0.0,
-                "top_comment_1": "",
-                "top_comment_2": "",
-                "top_comment_3": "",
-                "top_comment_count": 0,
-                "engagement_total": reposts + comments + likes,
-            }
-        )
-    return posts
+    return _html_parse_posts_from_html(html)
 
 
 def _extract_full_text_from_detail_html(page_html: str) -> str:
@@ -1101,7 +942,7 @@ def _extract_full_text_from_detail_html(page_html: str) -> str:
     texts: list[str] = []
     for selector in selectors:
         for node in soup.select(selector):
-            if _is_inside_forwarded_content(node):
+            if _html_is_inside_forwarded_content(node):
                 continue
             text = _clean_text_preserve(node.get_text("\n", strip=True))
             if text and "微博社区公约" not in text:
@@ -1237,63 +1078,7 @@ def export_posts_csv(posts: Iterable[dict], csv_path: Path) -> None:
 
 
 def export_posts_xlsx(posts: Iterable[dict], xlsx_path: Path) -> None:
-    xlsx_path.parent.mkdir(parents=True, exist_ok=True)
-    rows = list(posts)
-    wb = Workbook()
-    ws = cast(Worksheet, wb.active)
-    ws.title = "帖子统计"
-
-    base_headers = [cn for _, cn in EXPORT_COLUMN_MAP]
-    max_embed_images = max(
-        (len(_get_embed_image_paths(row)) for row in rows),
-        default=0,
-    )
-    image_headers = [f"{EMBED_IMAGE_HEADER_PREFIX}{i}" for i in range(1, max_embed_images + 1)]
-    headers = base_headers + image_headers
-    ws.append(headers)
-
-    header_font = Font(bold=True)
-    for col_idx, header in enumerate(headers, start=1):
-        cell = ws.cell(row=1, column=col_idx)
-        cell.font = header_font
-        if header.startswith(EMBED_IMAGE_HEADER_PREFIX):
-            width = 26
-        else:
-            width = WIDE_COLUMNS.get(header, 14)
-        ws.column_dimensions[get_column_letter(col_idx)].width = width
-
-    for post in rows:
-        row = _build_export_row(post)
-        ws.append([row[h] for h in base_headers] + [""] * max_embed_images)
-
-    wrap_cols = {"帖子内容", "原图链接", "图片本地路径", "热评1(按点赞)", "热评2(按点赞)", "热评3(按点赞)"}
-    for col_idx, header in enumerate(headers, start=1):
-        if header in wrap_cols:
-            for r in range(2, ws.max_row + 1):
-                ws.cell(row=r, column=col_idx).alignment = Alignment(wrap_text=True, vertical="top")
-
-    if max_embed_images > 0:
-        base_col_count = len(base_headers)
-        for row_idx, post in enumerate(rows, start=2):
-            image_paths = _get_embed_image_paths(post)
-            if not image_paths:
-                continue
-            ws.row_dimensions[row_idx].height = 125
-            for img_idx, img_path in enumerate(image_paths[:max_embed_images], start=1):
-                col_idx = base_col_count + img_idx
-                cell_ref = f"{get_column_letter(col_idx)}{row_idx}"
-                try:
-                    xl_img = XLImage(img_path)
-                except Exception:
-                    continue
-                max_w, max_h = 180, 120
-                if xl_img.width and xl_img.height:
-                    scale = min(max_w / xl_img.width, max_h / xl_img.height, 1.0)
-                    xl_img.width = int(xl_img.width * scale)
-                    xl_img.height = int(xl_img.height * scale)
-                ws.add_image(xl_img, cell_ref)
-
-    wb.save(xlsx_path)
+    _export_posts_xlsx(posts, xlsx_path, EXPORT_COLUMN_MAP)
 
 
 def _build_export_row(post: dict) -> dict:
@@ -1301,107 +1086,7 @@ def _build_export_row(post: dict) -> dict:
 
 
 def build_comment_leaderboards(posts: Iterable[dict], top_n: int = 3) -> dict:
-    rows = list(posts)
-    stats: dict[str, dict] = {}
-
-    def ensure_user(name: str) -> dict:
-        key = _clean_text(name) or "匿名用户"
-        if key not in stats:
-            stats[key] = {
-                "user_name": key,
-                "comment_count": 0,
-                "commented_post_count": 0,
-                "comment_likes_total": 0,
-                "hot_top3_count": 0,
-                "like_rate": 0.0,
-                "hot_rate": 0.0,
-                "quality_score": 0.0,
-                "_commented_post_ids": set(),
-            }
-        return stats[key]
-
-    for post in rows:
-        post_id = _clean_text(str(post.get("post_id", "") or ""))
-        post_key = post_id or f"{_clean_text(str(post.get('post_url', '') or ''))}|{_clean_text(str(post.get('publish_time', '') or ''))}"
-        all_comments = list(post.get("all_comments_data") or [])
-        for comment in all_comments:
-            if not isinstance(comment, dict):
-                continue
-            item = ensure_user(str(comment.get("user_name", "") or "匿名用户"))
-            item["comment_count"] += 1
-            item["comment_likes_total"] += int(comment.get("like_counts", 0) or 0)
-            item["_commented_post_ids"].add(post_key)
-
-        hot_comments = list(post.get("top_comments_data") or [])[:3]
-        for comment in hot_comments:
-            if not isinstance(comment, dict):
-                continue
-            item = ensure_user(str(comment.get("user_name", "") or "匿名用户"))
-            item["hot_top3_count"] += 1
-
-    users = [x for x in stats.values() if int(x.get("comment_count", 0) or 0) > 0]
-    if not users:
-        return {"comment_count_top3": [], "comment_quality_top3": [], "all_stats": []}
-
-    for item in users:
-        count = max(1, int(item["comment_count"]))
-        item["like_rate"] = float(item["comment_likes_total"]) / count
-        item["hot_rate"] = float(item["hot_top3_count"]) / count
-        item["commented_post_count"] = len(item.get("_commented_post_ids", set()))
-
-    max_like_rate = max((float(x["like_rate"]) for x in users), default=0.0)
-    max_hot_rate = max((float(x["hot_rate"]) for x in users), default=0.0)
-
-    for item in users:
-        like_norm = (float(item["like_rate"]) / max_like_rate) if max_like_rate > 0 else 0.0
-        hot_norm = (float(item["hot_rate"]) / max_hot_rate) if max_hot_rate > 0 else 0.0
-        base_score = 0.6 * like_norm + 0.4 * hot_norm
-        stability = min(1.0, float(item["comment_count"]) / 8.0)
-        item["quality_score"] = round(base_score * stability, 4)
-
-    count_sorted = sorted(
-        users,
-        key=lambda x: (
-            int(x["comment_count"]),
-            int(x.get("commented_post_count", 0)),
-            int(x["comment_likes_total"]),
-            int(x["hot_top3_count"]),
-            str(x["user_name"]),
-        ),
-        reverse=True,
-    )
-    quality_sorted = sorted(
-        users,
-        key=lambda x: (
-            float(x["quality_score"]),
-            int(x["comment_likes_total"]),
-            int(x["hot_top3_count"]),
-            int(x["comment_count"]),
-            str(x["user_name"]),
-        ),
-        reverse=True,
-    )
-
-    def with_rank(rows_: list[dict]) -> list[dict]:
-        out: list[dict] = []
-        for idx, item in enumerate(rows_[: max(1, top_n)], start=1):
-            copied = dict(item)
-            copied.pop("_commented_post_ids", None)
-            copied["rank"] = idx
-            out.append(copied)
-        return out
-
-    all_stats: list[dict] = []
-    for item in users:
-        copied = dict(item)
-        copied.pop("_commented_post_ids", None)
-        all_stats.append(copied)
-
-    return {
-        "comment_count_top3": with_rank(count_sorted),
-        "comment_quality_top3": with_rank(quality_sorted),
-        "all_stats": all_stats,
-    }
+    return _comments_build_comment_leaderboards(posts, top_n=top_n)
 
 
 def _format_leaderboard_line(
@@ -1437,60 +1122,14 @@ def export_weekly_report_docx(
     preselected: bool = False,
     max_bytes: int = DOCX_SIZE_LIMIT_BYTES,
 ) -> list[Path]:
-    all_posts = list(posts)
-    rows = all_posts[:15] if preselected else _select_weekly_posts(all_posts, limit=15)
-    board = leaderboards or build_comment_leaderboards(all_posts, top_n=3)
-    docx_path.parent.mkdir(parents=True, exist_ok=True)
-
-    if not rows:
-        out_path = _numbered_docx_path(docx_path, 1)
-        _write_weekly_report_docx_part([], out_path, title, board, include_leaderboards=True)
-        return [out_path]
-
-    parts: list[Path] = []
-    current: list[dict] = []
-    trial_path = docx_path.with_name(f"_{docx_path.stem}_trial{docx_path.suffix}")
-    limit = max(1, int(max_bytes or DOCX_SIZE_LIMIT_BYTES))
-
-    for post in rows:
-        trial_rows = current + [post]
-        _write_weekly_report_docx_part(
-            trial_rows,
-            trial_path,
-            title,
-            board,
-            include_leaderboards=(len(parts) == 0),
-        )
-        trial_size = trial_path.stat().st_size if trial_path.exists() else 0
-        with suppress(Exception):
-            trial_path.unlink(missing_ok=True)
-
-        if trial_size > limit and current:
-            out_path = _numbered_docx_path(docx_path, len(parts) + 1)
-            _write_weekly_report_docx_part(
-                current,
-                out_path,
-                title,
-                board,
-                include_leaderboards=(len(parts) == 0),
-            )
-            parts.append(out_path)
-            current = [post]
-        else:
-            current = trial_rows
-
-    if current:
-        out_path = _numbered_docx_path(docx_path, len(parts) + 1)
-        _write_weekly_report_docx_part(
-            current,
-        out_path,
-        title,
-        board,
-        include_leaderboards=(len(parts) == 0),
+    return _export_weekly_report_docx(
+        posts,
+        docx_path,
+        title=title,
+        leaderboards=leaderboards,
+        preselected=preselected,
+        max_bytes=max_bytes,
     )
-        parts.append(out_path)
-
-    return parts
 
 
 def export_weekly_report_sum_docx(
@@ -1500,227 +1139,13 @@ def export_weekly_report_sum_docx(
     leaderboards: dict | None = None,
     preselected: bool = False,
 ) -> Path:
-    all_posts = list(posts)
-    rows = all_posts[:15] if preselected else _select_weekly_posts(all_posts, limit=15)
-    board = leaderboards or build_comment_leaderboards(all_posts, top_n=3)
-    docx_path.parent.mkdir(parents=True, exist_ok=True)
-    _write_weekly_report_docx_part(
-        rows,
+    return _export_weekly_report_sum_docx(
+        posts,
         docx_path,
-        title,
-        board,
-        include_leaderboards=True,
+        title=title,
+        leaderboards=leaderboards,
+        preselected=preselected,
     )
-    return docx_path
-
-
-def _numbered_docx_path(docx_path: Path, seq: int) -> Path:
-    return docx_path.with_name(f"{docx_path.stem}_{seq:02d}{docx_path.suffix}")
-
-
-def _write_weekly_report_docx_part(
-    rows: list[dict],
-    docx_path: Path,
-    title: str,
-    board: dict,
-    include_leaderboards: bool,
-) -> None:
-    doc = create_doc()
-
-    normal = cast(Any, doc.styles["Normal"])
-    normal.font.name = "Microsoft YaHei"
-    _set_east_asia_font(normal, "Microsoft YaHei")
-    normal.font.size = Pt(11)
-
-    if include_leaderboards:
-        date_range_text = _format_posts_date_range(rows)
-
-        p_title = doc.add_paragraph()
-        p_title.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
-        run = p_title.add_run(title)
-        run.bold = True
-        run.font.size = Pt(26)
-        run.font.color.rgb = RGBColor(33, 37, 41)
-        run.font.name = "Microsoft YaHei"
-        _set_run_east_asia_font(run, "Microsoft YaHei")
-
-        p_sub = doc.add_paragraph()
-        p_sub.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
-        run = p_sub.add_run(f"帖子选取日期：{date_range_text}")
-        run.bold = True
-        run.font.size = Pt(12)
-        run.font.color.rgb = RGBColor(52, 58, 64)
-        run.font.name = "Microsoft YaHei"
-        _set_run_east_asia_font(run, "Microsoft YaHei")
-
-        p_rank_title = doc.add_paragraph()
-        run = p_rank_title.add_run("本周社区互动榜")
-        run.bold = True
-        run.font.size = Pt(13)
-        run.font.name = "Microsoft YaHei"
-        _set_run_east_asia_font(run, "Microsoft YaHei")
-
-        p_count_title = doc.add_paragraph()
-        run = p_count_title.add_run("评论数量榜 Top3")
-        run.bold = True
-        run.font.size = Pt(11)
-        run.font.name = "Microsoft YaHei"
-        _set_run_east_asia_font(run, "Microsoft YaHei")
-        count_rows = list(board.get("comment_count_top3") or [])
-        if count_rows:
-            for item in count_rows:
-                p = doc.add_paragraph()
-                run = p.add_run(
-                    _format_leaderboard_line(
-                        item,
-                        include_hot=False,
-                        include_quality=False,
-                        include_like_total=False,
-                        include_post_span=True,
-                    )
-                )
-                run.font.size = Pt(10)
-                run.font.name = "Microsoft YaHei"
-                _set_run_east_asia_font(run, "Microsoft YaHei")
-        else:
-            doc.add_paragraph("暂无评论数据")
-
-        p_quality_title = doc.add_paragraph()
-        run = p_quality_title.add_run("评论质量榜 Top3")
-        run.bold = True
-        run.font.size = Pt(11)
-        run.font.name = "Microsoft YaHei"
-        _set_run_east_asia_font(run, "Microsoft YaHei")
-        quality_rows = list(board.get("comment_quality_top3") or [])
-        if quality_rows:
-            for item in quality_rows:
-                p = doc.add_paragraph()
-                run = p.add_run(_format_leaderboard_line(item, include_hot=True, include_quality=False))
-                run.font.size = Pt(10)
-                run.font.name = "Microsoft YaHei"
-                _set_run_east_asia_font(run, "Microsoft YaHei")
-        else:
-            doc.add_paragraph("暂无评论数据")
-
-        doc.add_paragraph("")
-
-        p_posts_title = doc.add_paragraph()
-        run = p_posts_title.add_run("本周热帖Top15")
-        run.bold = True
-        run.font.size = Pt(13)
-        run.font.name = "Microsoft YaHei"
-        _set_run_east_asia_font(run, "Microsoft YaHei")
-        doc.add_paragraph("")
-
-    for post in rows:
-        author = _clean_text(str(post.get("user_name", "") or "未知作者"))
-        content = _clean_report_text(str(post.get("content", "") or ""))
-        publish_time = _clean_text(str(post.get("publish_time", "") or ""))
-        post_url = _clean_text(str(post.get("post_url", "") or ""))
-
-        p_body = doc.add_paragraph()
-        run = p_body.add_run(f"@{author}")
-        run.bold = True
-        run.font.size = Pt(12)
-        run.font.name = "Microsoft YaHei"
-        _set_run_east_asia_font(run, "Microsoft YaHei")
-        run_colon = p_body.add_run("：")
-        run_colon.bold = True
-        run_colon.font.size = Pt(12)
-        run_colon.font.name = "Microsoft YaHei"
-        _set_run_east_asia_font(run_colon, "Microsoft YaHei")
-        run2 = p_body.add_run()
-        run2.font.size = Pt(12)
-        run2.font.name = "Microsoft YaHei"
-        _set_run_east_asia_font(run2, "Microsoft YaHei")
-        _add_preserved_text(run2, content)
-
-        p_time = doc.add_paragraph()
-        run = p_time.add_run(f"发送时间：{publish_time}")
-        run.font.size = Pt(10)
-        run.font.color.rgb = RGBColor(73, 80, 87)
-        run.font.name = "Microsoft YaHei"
-        _set_run_east_asia_font(run, "Microsoft YaHei")
-
-        image_paths = _split_multi_urls(str(post.get("image_local_paths") or ""), sep="|")
-        for img_path in image_paths:
-            _add_scaled_right_aligned_picture(doc, img_path, scale=0.50)
-
-        comments = _iter_report_comments(post)
-        if comments:
-            p_c_title = doc.add_paragraph()
-            run = p_c_title.add_run("热评：")
-            run.bold = True
-            run.font.size = Pt(10)
-            run.font.color.rgb = RGBColor(90, 98, 104)
-            run.font.name = "Microsoft YaHei"
-            _set_run_east_asia_font(run, "Microsoft YaHei")
-
-            for c in comments:
-                c_simple = _clean_report_text(_format_hot_comment_text(c))
-                if c_simple:
-                    p_c = doc.add_paragraph()
-                    run = p_c.add_run()
-                    run.font.size = Pt(9)
-                    run.font.color.rgb = RGBColor(108, 117, 125)
-                    run.font.name = "Microsoft YaHei"
-                    _set_run_east_asia_font(run, "Microsoft YaHei")
-                    _add_preserved_text(run, c_simple)
-
-                for c_img in _split_multi_urls(str(c.get("image_local_paths") or ""), sep="|"):
-                    _add_scaled_right_aligned_picture(doc, c_img, scale=0.25)
-
-        p_link = doc.add_paragraph()
-        label_run = p_link.add_run("帖子链接：")
-        label_run.font.size = Pt(10)
-        label_run.font.color.rgb = RGBColor(0, 102, 204)
-        label_run.font.name = "Microsoft YaHei"
-        _set_run_east_asia_font(label_run, "Microsoft YaHei")
-        run = _add_external_hyperlink_run(p_link, post_url, post_url) if post_url else p_link.add_run("")
-        run.font.size = Pt(10)
-        run.font.color.rgb = RGBColor(0, 102, 204)
-        run.font.name = "Microsoft YaHei"
-        _set_run_east_asia_font(run, "Microsoft YaHei")
-
-        doc.add_paragraph("")
-
-    doc.save(str(docx_path))
-
-
-def _add_preserved_text(run, text: str) -> None:
-    parts = _clean_text_preserve(text).split("\n")
-    for idx, part in enumerate(parts):
-        if idx > 0:
-            run.add_break()
-        if part:
-            run.add_text(part)
-
-
-def _add_external_hyperlink_run(paragraph, text: str, url: str):
-    rel_id = paragraph.part.relate_to(url, RT.HYPERLINK, is_external=True)
-    hyperlink = OxmlElement("w:hyperlink")
-    hyperlink.set(qn("r:id"), rel_id)
-    run = paragraph.add_run(text)
-    run.font.color.rgb = RGBColor(0, 102, 204)
-    run.font.underline = True
-    hyperlink.append(run._r)
-    paragraph._p.append(hyperlink)
-    return run
-
-
-def _add_scaled_right_aligned_picture(doc: DocxDocument, image_path: str, scale: float) -> None:
-    try:
-        section = doc.sections[-1]
-        page_width = int(section.page_width or 0)
-        left_margin = int(section.left_margin or 0)
-        right_margin = int(section.right_margin or 0)
-        usable_width = page_width - left_margin - right_margin
-        width = int(usable_width * max(0.05, min(1.0, float(scale))))
-        p = doc.add_paragraph()
-        p.alignment = WD_PARAGRAPH_ALIGNMENT.RIGHT
-        p.add_run().add_picture(image_path, width=width)
-    except Exception:
-        return
 
 
 def export_weekly_report_md(
@@ -1882,50 +1307,7 @@ def build_summary(posts: Iterable[dict]) -> dict:
 
 
 def analyze_active_period(posts: Iterable[dict]) -> dict:
-    rows = list(posts)
-    hour_counts = [0] * 24
-    valid = 0
-    for row in rows:
-        dt = parse_publish_datetime(str(row.get("publish_time", "") or ""))
-        if not dt:
-            continue
-        hour_counts[dt.hour] += 1
-        valid += 1
-
-    if valid == 0:
-        return {
-            "valid_posts": 0,
-            "hour_counts": hour_counts,
-            "top_hour": None,
-            "top_hour_count": 0,
-            "top_two_hour_start": None,
-            "top_two_hour_count": 0,
-            "low_hour": None,
-            "low_hour_count": 0,
-            "low_two_hour_start": None,
-            "low_two_hour_count": 0,
-            "recommended_anchor_hour": 20,
-        }
-
-    top_hour = max(range(24), key=lambda h: hour_counts[h])
-    low_hour = min(range(24), key=lambda h: hour_counts[h])
-    two_hour_scores = [hour_counts[h] + hour_counts[(h + 1) % 24] for h in range(24)]
-    top_two_start = max(range(24), key=lambda h: two_hour_scores[h])
-    low_two_start = min(range(24), key=lambda h: two_hour_scores[h])
-
-    return {
-        "valid_posts": valid,
-        "hour_counts": hour_counts,
-        "top_hour": top_hour,
-        "top_hour_count": hour_counts[top_hour],
-        "top_two_hour_start": top_two_start,
-        "top_two_hour_count": two_hour_scores[top_two_start],
-        "low_hour": low_hour,
-        "low_hour_count": hour_counts[low_hour],
-        "low_two_hour_start": low_two_start,
-        "low_two_hour_count": two_hour_scores[low_two_start],
-        "recommended_anchor_hour": top_two_start,
-    }
+    return _export_analyze_active_period(posts)
 
 
 def write_summary_txt(
@@ -1967,168 +1349,8 @@ def _date_key_from_publish_time(text: str, parsed_dt: datetime | None = None) ->
     return "未知日期"
 
 
-def _is_nested_feed_item(item: Tag) -> bool:
-    parent = item.parent
-    while isinstance(parent, Tag):
-        if parent.get("action-type") == "feed_list_item":
-            return True
-        if _is_forwarded_content_container(parent):
-            return True
-        parent = parent.parent
-    return False
-
-
-def _select_outer(root: Tag, selector: str) -> list[Tag]:
-    return [
-        node
-        for node in root.select(selector)
-        if isinstance(node, Tag) and not _is_inside_forwarded_content(node, root)
-    ]
-
-
-def _select_one_outer(root: Tag, selector: str) -> Tag | None:
-    for node in _select_outer(root, selector):
-        return node
-    return None
-
-
-def _is_inside_forwarded_content(node: Tag, root: Tag | None = None) -> bool:
-    current: Tag | None = node if isinstance(node, Tag) else None
-    while isinstance(current, Tag):
-        if root is not None and current is root:
-            return False
-        if _is_forwarded_content_container(current):
-            return True
-        if root is not None and current is not node and current.get("action-type") == "feed_list_item":
-            return True
-        current = current.parent if isinstance(current.parent, Tag) else None
-    return False
-
-
-def _is_forwarded_content_container(node: Tag) -> bool:
-    node_type = str(node.get("node-type") or "").strip()
-    if node_type in FORWARDED_NODE_TYPES:
-        return True
-    classes = node.get("class") or []
-    if isinstance(classes, str):
-        class_names = classes.split()
-    else:
-        class_names = [str(item) for item in classes]
-    return any(name in FORWARDED_CLASS_NAMES or name.startswith("WB_feed_expand") for name in class_names)
-
-
-def _extract_user_name(item: Tag) -> str:
-    selectors = [
-        "a[node-type='feed_list_item_name']",
-        "a.W_f14.W_fb.S_txt1[usercard]",
-        "a[usercard][nick-name]",
-        "a[usercard]",
-    ]
-    for sel in selectors:
-        text = _first_text(_select_outer(item, sel))
-        if text:
-            return _clean_text(text)
-    return ""
-
-
-def _extract_author_id(item: Tag) -> str:
-    tbinfo = str(item.get("tbinfo") or "")
-    m = re.search(r"ouid=(\d+)", tbinfo)
-    if m:
-        return m.group(1)
-
-    anchor = _select_one_outer(item, "a[usercard]")
-    if anchor:
-        usercard = str(anchor.get("usercard") or "")
-        m = re.search(r"id=(\d+)", usercard)
-        if m:
-            return m.group(1)
-    return ""
-
-
-def _extract_publish_time(item: Tag) -> str:
-    date_link = _select_one_outer(item, "a[node-type='feed_list_item_date']")
-    if not date_link:
-        return ""
-    title = date_link.get("title")
-    if title:
-        return _clean_text(str(title))
-    return _clean_text(date_link.get_text(" ", strip=True))
-
-
-def _extract_content(item: Tag) -> str:
-    selectors = [
-        "div[node-type='feed_list_content_full']",
-        "p[node-type='feed_list_content_full']",
-        "div[node-type='feed_list_content']",
-        "p[node-type='feed_list_content']",
-    ]
-    texts: list[str] = []
-    for sel in selectors:
-        for node in _select_outer(item, sel):
-            text = _clean_text_preserve(node.get_text("\n", strip=True))
-            if text:
-                texts.append(text)
-    if not texts:
-        return ""
-    return _remove_expand_hint(max(texts, key=len))
-
-
-def _extract_has_video(item: Tag) -> bool:
-    selectors = [
-        ".WB_video",
-        "video",
-        "[action-type='feed_list_media_play']",
-        "[action-type='feed_list_media_video']",
-        "[node-type='fl_h5_video']",
-        "a[suda-data*='video']",
-    ]
-    for selector in selectors:
-        if _select_one_outer(item, selector):
-            return True
-    return False
-
-
-def _extract_post_url(item: Tag) -> str:
-    date_link = _select_one_outer(item, "a[node-type='feed_list_item_date']")
-    if not date_link:
-        return ""
-    href = str(date_link.get("href") or "").strip()
-    return _to_absolute_url(href)
-
-
 def _extract_original_image_urls(item: Tag) -> list[str]:
-    urls: list[str] = []
-
-    # 1) 浠庡浘鐗囧尯瀹瑰櫒 action-data 鐨?clear_picSrc 鎻愬彇
-    for node in _select_outer(item, ".WB_media_a[action-data], .WB_media_wrap[action-data]"):
-        action_data = str(node.get("action-data") or "")
-        if "pic" not in action_data.lower():
-            continue
-        pairs = dict(parse_qsl(action_data))
-        clear_pic_src = pairs.get("clear_picSrc") or ""
-        urls.extend(
-            _to_original_pic_url(candidate)
-            for candidate in _split_url_candidates(clear_pic_src)
-        )
-
-    # 2) 浠庡浘鐗?media 鑺傜偣鎻愬彇 pid锛屾嫾鍘熷浘 URL
-    for media_node in _select_outer(item, "[action-type='feed_list_media_img']"):
-        action_data = str(media_node.get("action-data") or "")
-        pairs = dict(parse_qsl(action_data))
-        pid_text = str(pairs.get("pic_ids") or pairs.get("pid") or "").strip()
-        if not pid_text:
-            continue
-        pids = [x.strip() for x in pid_text.split(",") if x.strip()]
-        img = media_node.select_one("img")
-        img_src = _to_absolute_url(str((img.get("src") if img else "") or ""))
-        ext = _guess_image_ext(img_src)
-        host = _extract_sinaimg_host(img_src) or "wx1.sinaimg.cn"
-        urls.extend(f"https://{host}/large/{pid}{ext}" for pid in pids)
-        if img_src:
-            urls.append(_to_original_pic_url(img_src))
-
-    return _dedup_keep_order([u for u in urls if u])
+    return _html_extract_original_image_urls(item)
 
 
 def _to_absolute_url(url: str) -> str:
@@ -2136,64 +1358,31 @@ def _to_absolute_url(url: str) -> str:
 
 
 def _to_original_pic_url(url: str) -> str:
-    return normalize_image_url(url)
+    return _image_to_original_pic_url(url)
 
 
 def _split_url_candidates(text: str) -> list[str]:
-    return _split_multi_urls(text, sep=",")
+    return _image_split_url_candidates(text)
 
 
 def _split_multi_urls(text: str, sep: str) -> list[str]:
-    raw = str(text or "").strip()
-    if not raw:
-        return []
-    parts = [p.strip() for p in raw.split(sep) if p.strip()]
-    return [_to_absolute_url(p) for p in parts]
+    return _image_split_multi_urls(text, sep=sep)
 
 
 def _guess_image_ext(url: str) -> str:
-    m = re.search(r"(\.(?:jpg|jpeg|png|gif|webp))(?:[?#].*)?$", str(url or ""), flags=re.I)
-    if m:
-        return m.group(1).lower()
-    return ".jpg"
+    return _image_guess_image_ext(url)
 
 
 def _extract_sinaimg_host(url: str) -> str:
-    m = re.search(r"https?://([^/]*sinaimg\\.cn)/", str(url or ""), flags=re.I)
-    return m.group(1) if m else ""
+    return _image_extract_sinaimg_host(url)
 
 
 def _dedup_keep_order(values: list[str]) -> list[str]:
-    seen: set[str] = set()
-    out: list[str] = []
-    for v in values:
-        if v in seen:
-            continue
-        seen.add(v)
-        out.append(v)
-    return out
-
-
-def _extract_action_count(item: Tag, action_types: list[str]) -> int:
-    best = 0
-    for action_type in action_types:
-        for action in _select_outer(item, f"a[action-type='{action_type}']"):
-            text = _clean_text(action.get_text(" ", strip=True))
-            best = max(best, parse_count(text))
-    return best
+    return _image_dedup_keep_order(values)
 
 
 def parse_count(text: str) -> int:
-    raw = _clean_text(text)
-    if not raw:
-        return 0
-    m = re.search(r"(\d+(?:\.\d+)?)\s*万", raw)
-    if m:
-        return int(float(m.group(1)) * 10000)
-    m = re.search(r"(\d+)", raw)
-    if m:
-        return int(m.group(1))
-    return 0
+    return _html_parse_count(text)
 
 
 def _format_comment_for_cell(comment: dict) -> str:
@@ -2226,35 +1415,15 @@ def _normalize_comment_time(text: str) -> str:
 
 
 def _format_posts_date_range(posts: list[dict]) -> str:
-    dates: list[datetime] = []
-    for post in posts:
-        dt = parse_publish_datetime(str(post.get("publish_time", "") or ""))
-        if dt:
-            dates.append(dt)
-    if not dates:
-        today = datetime.now().strftime("%Y-%m-%d")
-        return f"{today} 至 {today}"
-    start = min(dates).strftime("%Y-%m-%d")
-    end = max(dates).strftime("%Y-%m-%d")
-    return f"{start} 至 {end}"
+    return _report_format_posts_date_range(posts)
 
 
 def _simplify_hot_comment(text: str) -> str:
-    raw = _clean_text(text)
-    m = re.match(r"^(.*?)（赞.*?）:\s*(.*)$", raw)
-    if m:
-        user = _clean_text(m.group(1))
-        content = _clean_text(m.group(2))
-        return f"{user}：{content}"
-    return raw
+    return _report_simplify_hot_comment(text)
 
 
 def _to_rel_path(base_dir: Path, target: Path) -> str:
-    try:
-        rel = target.resolve().relative_to(base_dir.resolve())
-        return str(rel).replace("\\", "/")
-    except Exception:
-        return str(target.resolve()).replace("\\", "/")
+    return _report_to_rel_path(base_dir, target)
 
 
 def _report_divider_line() -> str:
@@ -2262,9 +1431,7 @@ def _report_divider_line() -> str:
 
 
 def _select_weekly_posts(posts: Iterable[dict], limit: int = 15) -> list[dict]:
-    rows = list(posts)
-    selected = [row for row in rows if not _should_skip_weekly_post(row)]
-    return selected[: max(1, limit)]
+    return _report_select_weekly_posts(posts, limit=limit)
 
 
 def select_weekly_posts(posts: Iterable[dict], limit: int = 15) -> list[dict]:
@@ -2277,35 +1444,13 @@ def _should_skip_weekly_post(post: dict) -> bool:
 
 
 def _is_video_post(post: dict) -> bool:
-    if bool(post.get("has_video")):
-        return True
-    text = _clean_text(str(post.get("content") or "")).lower()
-    post_url = _clean_text(str(post.get("post_url") or "")).lower()
-    hit_keyword = any(k in text for k in ("视频", "vid", "播放量"))
-    has_video_link = any(k in text or k in post_url for k in ("video.weibo.com", "weibo.com/tv", "/tv/"))
-    return hit_keyword and has_video_link
+    excluded, reason = should_exclude_post(post)
+    return excluded and reason == "视频帖"
 
 
 def _is_summary_post(content: str) -> bool:
-    raw = _clean_text(content)
-    if not raw:
-        return False
-    low = raw.lower()
-    patterns = [
-        r"二创精选",
-        r"本周精选",
-        r"周报",
-        r"汇总",
-        r"合集",
-        r"索引",
-        r"导航",
-        r"整理了",
-        r"发布在.?b站",
-        r"前往观赏",
-        r"网页链接",
-        r"文章在该链接",
-    ]
-    return any(re.search(p, low, flags=re.I) for p in patterns)
+    excluded, reason = should_exclude_post({"content": content})
+    return excluded and reason in {"汇总帖", "导航帖"}
 
 
 def _get_embed_image_paths(post: dict) -> list[str]:
@@ -2318,55 +1463,15 @@ def _get_embed_image_paths(post: dict) -> list[str]:
 
 
 def _iter_report_comments(post: dict) -> list[dict]:
-    top_comments = post.get("top_comments_data") or []
-    result: list[dict] = []
-    if isinstance(top_comments, list) and top_comments:
-        for item in top_comments[:3]:
-            if not isinstance(item, dict):
-                continue
-            image_urls = _split_multi_urls(str(item.get("image_urls") or ""), sep="|")
-            image_local_paths = _split_multi_urls(str(item.get("image_local_paths") or ""), sep="|")
-            text = _clean_text_preserve(str(item.get("text", "") or ""))
-            if image_urls or image_local_paths:
-                text = _strip_url_like_text(text)
-            result.append(
-                {
-                    "user_name": _clean_text(str(item.get("user_name", "") or "")),
-                    "text": text,
-                    "image_urls": " | ".join(image_urls),
-                    "image_local_paths": " | ".join(image_local_paths),
-                }
-            )
-    if result:
-        return result
-
-    fallback = [
-        _clean_text(str(post.get("top_comment_1", "") or "")),
-        _clean_text(str(post.get("top_comment_2", "") or "")),
-        _clean_text(str(post.get("top_comment_3", "") or "")),
-    ]
-    return [{"user_name": "", "text": x, "image_urls": "", "image_local_paths": ""} for x in fallback if x]
+    return _report_iter_report_comments(post)
 
 
 def _format_hot_comment_text(comment: dict) -> str:
-    user = _clean_text(str(comment.get("user_name", "") or ""))
-    text = _clean_text_preserve(str(comment.get("text", "") or ""))
-    if user and text:
-        return f"{user}：{text}"
-    if text:
-        return text
-    if user and _split_multi_urls(str(comment.get("image_local_paths") or ""), sep="|"):
-        return f"{user}： （图片评论）"
-    return ""
+    return _report_format_hot_comment_text(comment)
 
 
 def _collect_top_comment_image_urls(top_comments: list[dict]) -> list[str]:
-    urls: list[str] = []
-    for comment in top_comments[:3]:
-        if not isinstance(comment, dict):
-            continue
-        urls.extend(_collect_comment_image_urls(comment))
-    return _dedup_image_urls(urls)
+    return _image_collect_top_comment_image_urls(top_comments)
 
 
 def _extract_comment_image_urls(comment: dict) -> list[str]:
@@ -2374,97 +1479,27 @@ def _extract_comment_image_urls(comment: dict) -> list[str]:
 
 
 def _extract_status_image_urls(status: dict) -> list[str]:
-    urls: list[str] = []
-    if not isinstance(status, dict):
-        return urls
-    urls.extend(_extract_urls_from_data_node(status.get("pic_infos")))
-    urls.extend(_extract_urls_from_data_node(status.get("pic")))
-    urls.extend(_extract_urls_from_data_node(status.get("url_struct")))
-    urls.extend(_extract_urls_from_data_node(status.get("url_objects")))
-    urls.extend(_extract_urls_from_data_node(status.get("mix_media_info")))
-    return _dedup_image_urls(urls)
+    return _image_extract_status_image_urls(status)
 
 
 def _collect_comment_image_urls(comment: dict) -> list[str]:
-    if not isinstance(comment, dict):
-        return []
-    urls: list[str] = []
-    direct = comment.get("image_urls")
-    if isinstance(direct, str):
-        urls.extend(_split_multi_urls(direct, sep="|"))
-    elif isinstance(direct, list):
-        urls.extend([str(x) for x in direct if str(x).strip()])
-    for key in ("pic", "pic_infos", "url_struct", "url_objects", "mix_media_info"):
-        urls.extend(_extract_urls_from_data_node(comment.get(key)))
-    return _dedup_image_urls(urls)
+    return _image_collect_comment_image_urls(comment)
 
 
 def _dedup_image_urls(urls: list[str]) -> list[str]:
-    out: list[str] = []
-    seen: set[str] = set()
-    for raw in urls:
-        url = _to_original_pic_url(str(raw))
-        if not _looks_like_image_url(url):
-            continue
-        sig = _image_signature(url)
-        if sig in seen:
-            continue
-        seen.add(sig)
-        out.append(url)
-    return out
+    return _image_dedup_image_urls(urls)
 
 
 def _image_signature(url: str) -> str:
-    clean = _to_absolute_url(url).split("?", 1)[0].split("#", 1)[0]
-    m = re.search(r"/([A-Za-z0-9]+)\.(?:jpg|jpeg|png|gif|webp)$", clean, flags=re.I)
-    if m:
-        return m.group(1).lower()
-    return clean.lower()
+    return _image_image_signature(url)
 
 
 def _extract_urls_from_data_node(node) -> list[str]:
-    urls: list[str] = []
-    if isinstance(node, str):
-        maybe = _to_absolute_url(node)
-        if _looks_like_image_url(maybe):
-            urls.append(maybe)
-        return urls
-    if isinstance(node, list):
-        for item in node:
-            urls.extend(_extract_urls_from_data_node(item))
-        return urls
-    if isinstance(node, dict):
-        for key in ("url", "ori_url", "pic", "pic_url", "thumbnail_pic", "bmiddle_pic", "original_pic"):
-            value = node.get(key)
-            if isinstance(value, str):
-                maybe = _to_absolute_url(value)
-                if _looks_like_image_url(maybe):
-                    urls.append(maybe)
-            elif isinstance(value, dict):
-                nested = value.get("url")
-                if isinstance(nested, str):
-                    maybe = _to_absolute_url(nested)
-                    if _looks_like_image_url(maybe):
-                        urls.append(maybe)
-        for key in ("large", "largest", "orj360", "mw2000", "mw690"):
-            value = node.get(key)
-            if isinstance(value, dict):
-                maybe = _to_absolute_url(str(value.get("url") or ""))
-                if _looks_like_image_url(maybe):
-                    urls.append(maybe)
-        for value in node.values():
-            if isinstance(value, (dict, list)):
-                urls.extend(_extract_urls_from_data_node(value))
-    return urls
+    return _image_extract_urls_from_data_node(node)
 
 
 def _looks_like_image_url(url: str) -> bool:
-    u = _to_absolute_url(url)
-    if not u:
-        return False
-    if re.search(r"\.(?:jpg|jpeg|png|gif|webp)(?:[?#].*)?$", u, flags=re.I):
-        return True
-    return "sinaimg.cn" in u.lower()
+    return _image_looks_like_image_url(url)
 
 
 def _html_to_text(text: str) -> str:
@@ -2476,12 +1511,7 @@ def _html_to_text_preserve(text: str) -> str:
 
 
 def _strip_url_like_text(text: str) -> str:
-    raw = _clean_text(text)
-    raw = re.sub(r"https?://\S+", " ", raw, flags=re.I)
-    raw = re.sub(r"\b(?:t\.cn|weibo\.cn|weibo\.com)/\S+", " ", raw, flags=re.I)
-    raw = re.sub(r"(网页链接|网页链接\:?)", " ", raw, flags=re.I)
-    raw = re.sub(r"\s{2,}", " ", raw)
-    return raw.strip()
+    return _report_strip_url_like_text(text)
 
 
 def _strip_specific_topic_tags(text: str) -> str:
@@ -2500,143 +1530,15 @@ def _safe_filename_part(text: str, max_len: int = 24) -> str:
 
 
 def _clean_report_text(text: str) -> str:
-    raw = _strip_specific_topic_tags_preserve(_clean_text_preserve(text))
-    raw = _replace_weibo_emoticons(raw)
-    raw = _replace_unicode_emoji(raw)
-    # 去掉微博字体图标的私有区字符、零宽字符，避免周报里出现乱码方块。
-    raw = re.sub(r"[\u200b-\u200f\u202a-\u202e\ufeff]", "", raw)
-    raw = raw.replace("\ufe0f", "")
-    raw = re.sub(r"[\ue000-\uf8ff]", "", raw)
-    return _clean_text_preserve(raw)
+    return _report_clean_report_text(text)
 
 
 def _replace_weibo_emoticons(text: str) -> str:
-    mapping = {
-        # 开心/友好
-        "抱一抱": "(づ｡◕‿‿◕｡)づ",
-        "抱抱": "(づ￣ 3￣)づ",
-        "打call": "ヾ(≧▽≦*)o",
-        "哈哈": "(๑>◡<๑)",
-        "嘻嘻": "(*^▽^*)",
-        "可爱": "(=^･ω･^=)",
-        "爱你": "( ˘ ³˘)♥",
-        "亲亲": "( ˘ ³˘)♥",
-        "鼓掌": "(*'ω'ﾉﾉﾞ☆",
-        "送花花": "(✿◡‿◡)",
-        "赞": "(๑•̀ㅂ•́)و",
-        "ok": "(๑•̀ㅂ•́)و",
-
-        # 笑哭/偏搞笑（和“哭泣”区分）
-        "笑cry": "(≧▽≦;)",
-        "笑哭": "(≧▽≦;)",
-        "偷笑": "(￣▽￣)~*",
-        "憨笑": "(≧∀≦)ゞ",
-        "doge": "(￣▽￣)",
-        "doge脸": "(￣▽￣)",
-        "二哈": "(哈▽哈)",
-        "允悲": "(；▽；)",
-
-        # 难过/哭泣
-        "泪": "(T_T)",
-        "流泪": "(；﹏；)",
-        "泪奔": "(ಥ_ಥ)",
-        "悲伤": "(Q_Q)",
-        "大哭": "(╥﹏╥)",
-        "委屈": "(｡•́︿•̀｡)",
-        "可怜": "(´；ω；`)",
-
-        # 其他常见情绪
-        "思考": "( •̀ .̫ •́ )",
-        "疑问": "( ?_? )",
-        "跪了": "_(:3」∠)_",
-        "馋嘴": "(๑´ڡ`๑)",
-        "干饭人": "(๑´ڡ`๑)",
-        "裂开": "(⊙_⊙;)",
-        "苦涩": "(＞﹏＜)",
-        "哇": "(✧ω✧)",
-        "心": "<3",
-        "给你小心心": "<3<3",
-    }
-
-    def repl(match: re.Match[str]) -> str:
-        key = _clean_text(match.group(1))
-        return mapping.get(key, "(๑•ᴗ•๑)")
-
-    return re.sub(r"\[([^\[\]]{1,24})\]", repl, text)
+    return _report_replace_weibo_emoticons(text)
 
 
 def _replace_unicode_emoji(text: str) -> str:
-    emoji_map = {
-        # 开心/友好
-        "😀": "(*^_^*)",
-        "😄": "(*^o^*)",
-        "😁": "(๑>◡<๑)",
-        "😆": "(≧ω≦)",
-        "😊": "(*^_^*)",
-        "😍": "(=^.^=)",
-        "🥰": "(=^.^=)",
-        "😘": "(*^3^*)",
-        "😋": "(^q^)",
-        "🤗": "(*^_^*)",
-        "😇": "(^_^)v",
-        "😎": "B-)",
-
-        # 笑哭（和哭泣区分）
-        "😂": "(≧▽≦;)",
-        "🤣": "xD",
-        "😹": "(=^▽^=;)",
-        "😅": "(*^_^*;)",
-
-        # 难过/哭泣
-        "😢": "(；﹏；)",
-        "😭": "(╥﹏╥)",
-        "🥲": "(´；ω；`)",
-        "😿": "(T_T)",
-        "🥺": "(｡•́︿•̀｡)",
-
-        # 其他
-        "🤔": "( •̀ .̫ •́ )",
-        "😴": "(-_-) zzz",
-        "😐": "( -_- )",
-        "😑": "( -_- )",
-        "😶": "( ._. )",
-        "❤": "<3",
-        "❤️": "<3",
-        "💗": "<3",
-        "💖": "<3",
-        "💘": "<3",
-        "💕": "<3",
-        "💞": "<3",
-        "✨": "(*_*)",
-        "🌟": "(*_*)",
-        "👍": "(^_^)v",
-        "👏": "(*'ω'ﾉﾉﾞ☆",
-        "🙏": "(*^_^*)",
-    }
-    out = text
-    for emo, face in emoji_map.items():
-        out = out.replace(emo, face)
-    # 兜底替换仍残留的 emoji 为温和颜文字，避免跨平台显示差异
-    return re.sub(r"[\U0001F300-\U0001FAFF\u2600-\u27BF]", "(๑•ᴗ•๑)", out)
-
-
-def _set_east_asia_font(style, font_name: str) -> None:
-    rpr = style.element.get_or_add_rPr()
-    rfonts = rpr.rFonts
-    if rfonts is None:
-        rfonts = OxmlElement("w:rFonts")
-        rpr.append(rfonts)
-    rfonts.set(qn("w:eastAsia"), font_name)
-
-
-def _set_run_east_asia_font(run, font_name: str) -> None:
-    r = run._element
-    rpr = r.get_or_add_rPr()
-    rfonts = rpr.rFonts
-    if rfonts is None:
-        rfonts = OxmlElement("w:rFonts")
-        rpr.append(rfonts)
-    rfonts.set(qn("w:eastAsia"), font_name)
+    return _report_replace_unicode_emoji(text)
 
 
 def _first_text(elements: list) -> str:

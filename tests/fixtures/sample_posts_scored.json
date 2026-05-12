@@ -1,0 +1,122 @@
+[
+  {
+    "post_id": "1001",
+    "user_id": "u1001",
+    "user_name": "测试作者A",
+    "publish_time": "2026-05-01 12:00",
+    "content": "第一条测试正文\n包含换行，用于验证周报导出层级。",
+    "post_url": "https://weibo.com/1001",
+    "original_image_urls": "https://img.example.com/a.jpg",
+    "image_local_paths": "",
+    "likes": 120,
+    "comments": 18,
+    "reposts": 7,
+    "author_replies": 3,
+    "non_author_comments": 15,
+    "topic_comment_factor": 1.0,
+    "score": 58.6,
+    "engagement_total": 145,
+    "score_detail": {
+      "likes_score": 36.0,
+      "non_author_comment_score": 7.5,
+      "author_reply_score": 1.5,
+      "repost_score": 0.7,
+      "base_score": 45.7,
+      "time_weight": 1.28,
+      "final_score": 58.6
+    },
+    "top_comments_data": [
+      {
+        "id": "c1001",
+        "user_id": "u2001",
+        "user_name": "评论者A",
+        "text": "热评内容",
+        "like_counts": 12,
+        "image_urls": "https://img.example.com/comment-a.jpg",
+        "image_local_paths": ""
+      }
+    ],
+    "all_comments_data": [
+      {
+        "id": "c1001",
+        "user_id": "u2001",
+        "user_name": "评论者A",
+        "text": "热评内容",
+        "like_counts": 12
+      },
+      {
+        "id": "c1002",
+        "user_id": "u1001",
+        "user_name": "测试作者A",
+        "text": "楼主回复",
+        "like_counts": 3
+      }
+    ]
+  },
+  {
+    "post_id": "1002",
+    "user_id": "u1002",
+    "user_name": "测试作者B",
+    "publish_time": "2026-05-02 18:30",
+    "content": "第二条普通图文帖。",
+    "post_url": "https://weibo.com/1002",
+    "original_image_urls": "",
+    "image_local_paths": "",
+    "likes": 88,
+    "comments": 9,
+    "reposts": 4,
+    "author_replies": 1,
+    "non_author_comments": 8,
+    "topic_comment_factor": 1.0,
+    "score": 32.4,
+    "engagement_total": 101,
+    "score_detail": {
+      "likes_score": 26.4,
+      "non_author_comment_score": 4.0,
+      "author_reply_score": 0.5,
+      "repost_score": 0.4,
+      "base_score": 31.3,
+      "time_weight": 1.04,
+      "final_score": 32.4
+    },
+    "top_comments_data": [],
+    "all_comments_data": [
+      {
+        "id": "c2001",
+        "user_id": "u2001",
+        "user_name": "评论者A",
+        "text": "普通评论",
+        "like_counts": 4
+      }
+    ]
+  },
+  {
+    "post_id": "1003",
+    "user_id": "u1003",
+    "user_name": "测试作者C",
+    "publish_time": "2026-05-03 09:15",
+    "content": "第三条帖子，测试空图片和空评论。",
+    "post_url": "https://weibo.com/1003",
+    "original_image_urls": "",
+    "image_local_paths": "",
+    "likes": 45,
+    "comments": 0,
+    "reposts": 1,
+    "author_replies": 0,
+    "non_author_comments": 0,
+    "topic_comment_factor": 1.0,
+    "score": 14.2,
+    "engagement_total": 46,
+    "score_detail": {
+      "likes_score": 13.5,
+      "non_author_comment_score": 0.0,
+      "author_reply_score": 0.0,
+      "repost_score": 0.1,
+      "base_score": 13.6,
+      "time_weight": 1.04,
+      "final_score": 14.2
+    },
+    "top_comments_data": [],
+    "all_comments_data": []
+  }
+]

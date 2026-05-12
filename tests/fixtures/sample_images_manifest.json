@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "success": [
+    {
+      "post_id": "1001",
+      "type": "post_image",
+      "url": "https://img.example.com/a.jpg",
+      "local_path": "images/01_测试作者A_1001/post_01.jpg"
+    },
+    {
+      "post_id": "1001",
+      "type": "comment_image",
+      "url": "https://img.example.com/comment-a.jpg",
+      "local_path": "images/01_测试作者A_1001/comment1_01.jpg"
+    }
+  ],
+  "failed": []
+}

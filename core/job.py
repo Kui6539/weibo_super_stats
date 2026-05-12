@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from core.cache import CacheStore, sanitize_for_cache
+from core.crawl_types import CrawlConfig, CrawlError
 from core.errors import JobCancelled
 from core.events import (
     EVENT_LIMIT,
@@ -23,13 +24,7 @@ from core.events import (
 )
 from core.paths import make_run_dir
 from crawler import (
-    CrawlConfig,
-    CrawlError,
     WeiboSuperTopicCrawler,
-    analyze_active_period,
-    build_report_title,
-    build_comment_leaderboards,
-    build_summary,
     download_post_images,
     export_posts_csv,
     export_posts_xlsx,
@@ -42,6 +37,9 @@ from crawler import (
 )
 from export.context import ExportContext
 from export.manifest import build_manifest, write_manifest
+from export.summary_exporter import analyze_active_period, build_summary
+from modules.comments.ranking import build_comment_leaderboards
+from modules.topic import build_report_title
 
 ACTIVE_STATUSES = {"running", "awaiting_selection", "exporting"}
 _console_lock = threading.Lock()

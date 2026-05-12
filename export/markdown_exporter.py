@@ -4,6 +4,18 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
+from export.report_helpers import (
+    clean_report_text,
+    format_hot_comment_text,
+    format_posts_date_range,
+    iter_report_comments,
+    select_weekly_posts,
+    split_multi_values,
+    to_rel_path,
+)
+from modules.comments.ranking import build_comment_leaderboards
+from modules.text_cleaning import normalize_weibo_text
+
 
 def export_weekly_report_md(
     posts: Iterable[dict[str, Any]],
@@ -12,25 +24,13 @@ def export_weekly_report_md(
     leaderboards: dict[str, Any] | None = None,
     preselected: bool = False,
 ) -> None:
-    from crawler import (
-        _clean_report_text,
-        _clean_text,
-        _format_hot_comment_text,
-        _format_posts_date_range,
-        _iter_report_comments,
-        _select_weekly_posts,
-        _split_multi_urls,
-        _to_rel_path,
-        build_comment_leaderboards,
-    )
-
     all_posts = list(posts)
-    rows = all_posts[:15] if preselected else _select_weekly_posts(all_posts, limit=15)
+    rows = all_posts[:15] if preselected else select_weekly_posts(all_posts, limit=15)
     board = leaderboards or build_comment_leaderboards(all_posts, top_n=3)
     md_path.parent.mkdir(parents=True, exist_ok=True)
 
     md_dir = md_path.parent
-    date_range_text = _format_posts_date_range(rows)
+    date_range_text = format_posts_date_range(rows)
     overview = _build_overview(rows)
 
     lines: list[str] = [
@@ -62,12 +62,12 @@ def export_weekly_report_md(
         lines.extend(["> 暂无入选帖子。", ""])
 
     for index, post in enumerate(rows, start=1):
-        author = _clean_text(str(post.get("user_name", "") or "未知作者"))
-        content = _clean_report_text(str(post.get("content", "") or ""))
-        publish_time = _clean_text(str(post.get("publish_time", "") or ""))
-        post_url = _clean_text(str(post.get("post_url", "") or ""))
-        post_images = _split_multi_urls(str(post.get("image_local_paths") or ""), sep="|")
-        comments = _iter_report_comments(post)
+        author = normalize_weibo_text(str(post.get("user_name", "") or "未知作者"))
+        content = clean_report_text(str(post.get("content", "") or ""))
+        publish_time = normalize_weibo_text(str(post.get("publish_time", "") or ""))
+        post_url = normalize_weibo_text(str(post.get("post_url", "") or ""))
+        post_images = split_multi_values(str(post.get("image_local_paths") or ""), sep="|")
+        comments = iter_report_comments(post)
 
         lines.extend(
             [
@@ -92,20 +92,20 @@ def export_weekly_report_md(
         if post_images:
             lines.extend(["#### 配图", ""])
             for img_index, img_path in enumerate(post_images, start=1):
-                rel_path = _to_rel_path(md_dir, Path(img_path))
+                rel_path = to_rel_path(md_dir, Path(img_path))
                 lines.extend([f"![帖子配图 {index:02d}-{img_index}]({rel_path})", ""])
 
         if comments:
             lines.extend(["#### 热评", ""])
             for comment_index, comment in enumerate(comments, start=1):
-                comment_text = _clean_report_text(_format_hot_comment_text(comment))
+                comment_text = clean_report_text(format_hot_comment_text(comment))
                 if comment_text:
                     lines.extend([f"{comment_index}. {comment_text}", ""])
                 for image_index, image_path in enumerate(
-                    _split_multi_urls(str(comment.get("image_local_paths") or ""), sep="|"),
+                    split_multi_values(str(comment.get("image_local_paths") or ""), sep="|"),
                     start=1,
                 ):
-                    rel_path = _to_rel_path(md_dir, Path(image_path))
+                    rel_path = to_rel_path(md_dir, Path(image_path))
                     lines.extend([f"   ![热评配图 {index:02d}-{comment_index}-{image_index}]({rel_path})", ""])
 
         lines.extend(["---", ""])

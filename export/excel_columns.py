@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-import csv
-from collections.abc import Iterable
-from pathlib import Path
 from typing import Any
 
-DEFAULT_EXPORT_COLUMN_MAP = [
+EXCEL_COLUMNS: list[tuple[str, str]] = [
     ("user_name", "作者昵称"),
     ("publish_time", "帖子发送时间"),
     ("post_url", "帖子链接"),
@@ -26,20 +23,17 @@ DEFAULT_EXPORT_COLUMN_MAP = [
 ]
 
 
-def export_posts_csv(
-    posts: Iterable[dict[str, Any]],
-    csv_path: Path,
+def build_excel_rows(
+    posts: list[dict[str, Any]],
     column_map: list[tuple[str, str]] | None = None,
-) -> None:
-    column_map = column_map or DEFAULT_EXPORT_COLUMN_MAP
-    csv_path.parent.mkdir(parents=True, exist_ok=True)
-    headers = [cn for _, cn in column_map]
-    with csv_path.open("w", newline="", encoding="utf-8-sig") as handle:
-        writer = csv.DictWriter(handle, fieldnames=headers)
-        writer.writeheader()
-        for post in posts:
-            writer.writerow(build_export_row(post, column_map))
+) -> list[dict[str, Any]]:
+    columns = column_map or EXCEL_COLUMNS
+    return [{cn: format_cell_value(post.get(en, "")) for en, cn in columns} for post in posts]
 
 
-def build_export_row(post: dict[str, Any], column_map: list[tuple[str, str]]) -> dict[str, Any]:
-    return {cn: post.get(en, "") for en, cn in column_map}
+def format_cell_value(value: Any) -> Any:
+    if isinstance(value, (int, float)):
+        return value
+    if value is None:
+        return ""
+    return str(value)

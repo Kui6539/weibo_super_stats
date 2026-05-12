@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "run_id": "test_run",
+  "created_at": "2026-05-01 12:00:00",
+  "updated_at": "2026-05-01 12:05:00",
+  "tool": "weibo_super_stats",
+  "super_topic": "100808abc",
+  "super_topic_name": "测试超话",
+  "report_title": "测试超话周报",
+  "super_topic_id": "100808abc",
+  "window_start": "2026-05-01 04:00",
+  "window_end": "2026-05-08 04:00",
+  "selected_count": 2,
+  "total_posts": 3,
+  "candidate_count": 3,
+  "status": "completed",
+  "files": {
+    "markdown": "weekly_report.md",
+    "docx": [
+      "weekly_report_01.docx"
+    ],
+    "docx_sum": "weekly_report_sum.docx",
+    "excel": "weibo_posts.xlsx",
+    "xlsx": "weibo_posts.xlsx",
+    "csv": "weibo_posts.csv",
+    "summary": "weibo_summary.txt",
+    "images_dir": "images"
+  },
+  "cache": {
+    "run_config": "cache/run_config.json",
+    "posts_raw": "cache/posts_raw.json",
+    "posts_hydrated": "cache/posts_hydrated.json",
+    "posts_scored": "cache/posts_scored.json",
+    "candidates": "cache/candidates.json",
+    "selected_posts": "cache/selected_posts.json",
+    "community_stats": "cache/community_stats.json",
+    "images_manifest": "cache/images_manifest.json",
+    "comments_dir": "cache/comments"
+  },
+  "warnings": [],
+  "failed_images": [],
+  "reexport_count": 0,
+  "last_reexport_at": null
+}

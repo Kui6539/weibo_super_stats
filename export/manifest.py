@@ -5,8 +5,8 @@ from pathlib import Path
 from typing import Any
 
 from core.cache import sanitize_for_cache, write_manifest_json
-from crawler import parse_super_topic_id
 from export.context import ExportContext
+from modules.weibo_url import parse_super_topic_id
 
 
 def build_manifest(
@@ -28,11 +28,12 @@ def build_manifest(
         reexport_count += 1
 
     failed_image_count = int(failed_images or 0)
-    failed_image_rows = []
+    failed_image_rows = list(ctx.failed_images or [])
     if isinstance(ctx.images_manifest, dict):
-        failed_image_rows = list(ctx.images_manifest.get("failed") or [])
+        failed_image_rows = failed_image_rows or list(ctx.images_manifest.get("failed") or [])
         if not failed_image_count:
             failed_image_count = len(failed_image_rows)
+    merged_warnings = [*list(ctx.warnings or []), *list(warnings or [])]
 
     manifest = {
         "schema_version": 1,
@@ -72,7 +73,7 @@ def build_manifest(
             "images_manifest": "cache/images_manifest.json",
             "comments_dir": "cache/comments",
         },
-        "warnings": list(warnings or []),
+        "warnings": merged_warnings,
         "failed_image_count": failed_image_count,
         "failed_images": failed_image_rows,
         "reexport_count": reexport_count,

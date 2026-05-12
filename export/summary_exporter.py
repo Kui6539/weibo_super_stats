@@ -6,7 +6,7 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
-from modules.time_utils import normalize_date
+from modules.time_utils import normalize_date, parse_weibo_time
 
 
 def build_summary(posts: Iterable[dict[str, Any]]) -> dict[str, Any]:
@@ -51,6 +51,52 @@ def build_summary(posts: Iterable[dict[str, Any]]) -> dict[str, Any]:
         "posts_by_date": dict(sorted(daily_counter.items())),
     }
 
+
+def analyze_active_period(posts: Iterable[dict[str, Any]]) -> dict[str, Any]:
+    rows = list(posts)
+    hour_counts = [0] * 24
+    valid = 0
+    for row in rows:
+        dt = parse_weibo_time(str(row.get("publish_time", "") or ""))
+        if not dt:
+            continue
+        hour_counts[dt.hour] += 1
+        valid += 1
+
+    if valid == 0:
+        return {
+            "valid_posts": 0,
+            "hour_counts": hour_counts,
+            "top_hour": None,
+            "top_hour_count": 0,
+            "top_two_hour_start": None,
+            "top_two_hour_count": 0,
+            "low_hour": None,
+            "low_hour_count": 0,
+            "low_two_hour_start": None,
+            "low_two_hour_count": 0,
+            "recommended_anchor_hour": 20,
+        }
+
+    top_hour = max(range(24), key=lambda hour: hour_counts[hour])
+    low_hour = min(range(24), key=lambda hour: hour_counts[hour])
+    two_hour_scores = [hour_counts[hour] + hour_counts[(hour + 1) % 24] for hour in range(24)]
+    top_two_start = max(range(24), key=lambda hour: two_hour_scores[hour])
+    low_two_start = min(range(24), key=lambda hour: two_hour_scores[hour])
+
+    return {
+        "valid_posts": valid,
+        "hour_counts": hour_counts,
+        "top_hour": top_hour,
+        "top_hour_count": hour_counts[top_hour],
+        "top_two_hour_start": top_two_start,
+        "top_two_hour_count": two_hour_scores[top_two_start],
+        "low_hour": low_hour,
+        "low_hour_count": hour_counts[low_hour],
+        "low_two_hour_start": low_two_start,
+        "low_two_hour_count": two_hour_scores[low_two_start],
+        "recommended_anchor_hour": top_two_start,
+    }
 
 def write_summary_txt(
     summary: dict[str, Any],

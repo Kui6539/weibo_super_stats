@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "summary": {
+    "total_posts": 2,
+    "sum_reposts": 11,
+    "sum_comments": 27,
+    "sum_likes": 208,
+    "sum_engagement": 246,
+    "sum_score": 91.0
+  },
+  "leaderboards": {
+    "comment_count_top3": [
+      {
+        "rank": 1,
+        "user_name": "评论者A",
+        "comment_count": 2,
+        "commented_post_count": 2,
+        "comment_likes_total": 16,
+        "hot_top3_count": 1,
+        "quality_score": 0.25
+      }
+    ],
+    "comment_quality_top3": [
+      {
+        "rank": 1,
+        "user_name": "评论者A",
+        "comment_count": 2,
+        "commented_post_count": 2,
+        "comment_likes_total": 16,
+        "hot_top3_count": 1,
+        "quality_score": 0.25
+      }
+    ],
+    "all_stats": []
+  },
+  "active_period": {
+    "valid_posts": 2,
+    "top_hour": 12,
+    "top_hour_count": 1
+  }
+}

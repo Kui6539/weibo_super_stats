@@ -6,9 +6,11 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from core.crawl_types import CrawlConfig
 from core.errors import ConfigError
 from core.paths import is_writable_dir, normalize_output_dir
-from crawler import CrawlConfig, parse_super_topic_id
+from core.version import __version__
+from modules.weibo_url import parse_super_topic_id
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 CONFIG_PATH = ROOT_DIR / "weibo_stats_config.json"
@@ -296,6 +298,7 @@ def app_defaults() -> dict[str, Any]:
         "advanced_mode": "false",
         "log_position": {"mode": "bubble", "left": 18, "top": 86},
         "cookie_browser": "edge",
+        "version": __version__,
     }
     defaults.update({key: value for key, value in saved.items() if value})
     return defaults
