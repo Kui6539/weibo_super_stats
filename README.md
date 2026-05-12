@@ -66,7 +66,7 @@ pip install -r requirements.txt
 - 在页面中粘贴请求头或 cURL 片段。
 - 点击“识别粘贴内容”。
 
-更详细说明见 [Cookie获取简短教程.md](Cookie获取简短教程.md)。
+更详细说明见 [docs/Cookie获取简短教程.md](docs/Cookie获取简短教程.md)。
 
 ## 使用流程
 
@@ -121,7 +121,7 @@ pip install -r requirements.txt
 
 ## 开发与发布文档
 
-- [DEVELOPMENT.md](DEVELOPMENT.md)：开发环境、测试、扩展说明。
-- [ARCHITECTURE.md](ARCHITECTURE.md)：模块结构和数据流。
-- [CHANGELOG.md](CHANGELOG.md)：版本变更记录。
-- [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md)：发布前检查清单。
+- [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)：开发环境、测试、扩展说明。
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)：模块结构和数据流。
+- [docs/CHANGELOG.md](docs/CHANGELOG.md)：版本变更记录。
+- [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md)：发布前检查清单。

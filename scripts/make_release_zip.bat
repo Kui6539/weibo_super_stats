@@ -18,18 +18,12 @@ for %%F in (
   crawler.py
   cookie_helper.py
   requirements.txt
-  README.md
-  DEVELOPMENT.md
-  ARCHITECTURE.md
-  CHANGELOG.md
-  RELEASE_CHECKLIST.md
-  Cookie获取简短教程.md
   点我启动.bat
 ) do (
   if exist "%%F" copy /y "%%F" "%STAGE%\" >nul
 )
 
-for %%D in (core server modules export web tests scripts) do (
+for %%D in (core server modules export web tests scripts docs) do (
   if exist "%%D" robocopy "%%D" "%STAGE%\%%D" /E /XD __pycache__ .pytest_cache .ruff_cache /XF *.pyc *.pyo *.log >nul
   if errorlevel 8 (
     echo [make_release_zip] Failed to copy %%D.

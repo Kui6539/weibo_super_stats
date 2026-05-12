@@ -49,7 +49,7 @@ from server.responses import (
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 WEB_ROOT = ROOT_DIR / "web"
-HELP_DOC_PATH = ROOT_DIR / "Cookie获取简短教程.md"
+HELP_DOC_PATH = ROOT_DIR / "docs" / "Cookie获取简短教程.md"
 BACKGROUND_PATH = WEB_ROOT / "Background.png"
 
 
@@ -269,7 +269,7 @@ class AppRequestHandler(BaseHTTPRequestHandler):
 
     def handle_help_doc(self) -> None:
         if not HELP_DOC_PATH.exists() or not HELP_DOC_PATH.is_file():
-            json_error(self, "HELP_DOC_NOT_FOUND", "教程文档不存在", "请确认 Cookie获取简短教程.md 是否存在。", HTTPStatus.NOT_FOUND)
+            json_error(self, "HELP_DOC_NOT_FOUND", "教程文档不存在", "请确认 docs/Cookie获取简短教程.md 是否存在。", HTTPStatus.NOT_FOUND)
             return
         try:
             markdown = HELP_DOC_PATH.read_text(encoding="utf-8")
