@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.10.0 - Unreleased
+## v0.10.1 - Unreleased
 
 ### Added
 
@@ -11,6 +11,7 @@
 - 历史任务和输出清理在任务完成后自动刷新，无需手动扫描。
 - `/api/report-preview` 和 `/api/report-asset` 支持 `md_path` 查询参数，可预览非当前任务的报告。
 - `/api/open-result-dir` 支持 POST body 中传入 `run_dir`，可打开非当前任务的导出目录。
+- 所有 Markdown 窗口标题栏显示相对路径而非绝对路径。
 
 ### Changed
 
@@ -20,10 +21,13 @@
 - 导出/重新生成阶段禁用取消按钮（按钮仍显示但不可点击）。
 - 进度条步骤严格按顺序渲染，避免重新生成后新任务阶段错位。
 - 进度条仅在节点实际乱序时调整 DOM，避免轮询导致的视觉抖动。
+- Markdown 预览窗口、帮助文档窗口和历史预览窗口宽度增大。
+- 主布局 max-width 从 1520px 增至 1680px，预览列宽从 520px 增至 580px。
 
 ### Fixed
 
 - 从历史任务重新生成后，Markdown 预览和"打开文件所在位置"因无活跃任务而失败的问题。
+- 周报预览标题栏按钮在窄窗口下换行错位的问题（flex-wrap: nowrap）。
 
 ## v0.9.2 - Unreleased
 

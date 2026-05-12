@@ -36,7 +36,7 @@
   column-gap: 0;
   align-items: start;
   justify-content: center;
-  max-width: 1520px;
+  max-width: 1680px;
   margin: 0 auto;
   padding: 22px 28px 32px;
   transition:
@@ -46,7 +46,7 @@
 
 .layout.has-preview,
 .layout.has-candidate {
-  grid-template-columns: minmax(360px, 520px) minmax(520px, 1fr);
+  grid-template-columns: minmax(360px, 520px) minmax(580px, 1fr);
   column-gap: 18px;
 }
 

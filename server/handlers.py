@@ -394,7 +394,7 @@ class AppRequestHandler(BaseHTTPRequestHandler):
             markdown = md_path.read_text(encoding="utf-8")
         except UnicodeDecodeError:
             markdown = md_path.read_text(encoding="utf-8-sig")
-        send_json(self, {"markdown": markdown, "path": str(md_path)})
+        send_json(self, {"markdown": markdown, "path": _rel_display_path(md_path)})
 
     def handle_history_asset(self) -> None:
         parsed = urlparse(self.path)
@@ -481,7 +481,7 @@ class AppRequestHandler(BaseHTTPRequestHandler):
             markdown = report_path.read_text(encoding="utf-8")
         except UnicodeDecodeError:
             markdown = report_path.read_text(encoding="utf-8-sig")
-        send_json(self, {"markdown": markdown, "path": str(report_path)})
+        send_json(self, {"markdown": markdown, "path": _rel_display_path(report_path)})
 
     def handle_report_asset(self) -> None:
         parsed = urlparse(self.path)
@@ -511,7 +511,7 @@ class AppRequestHandler(BaseHTTPRequestHandler):
             markdown = HELP_DOC_PATH.read_text(encoding="utf-8")
         except UnicodeDecodeError:
             markdown = HELP_DOC_PATH.read_text(encoding="utf-8-sig")
-        send_json(self, {"markdown": markdown, "path": str(HELP_DOC_PATH)})
+        send_json(self, {"markdown": markdown, "path": _rel_display_path(HELP_DOC_PATH)})
 
     def handle_open_result_dir(self) -> None:
         payload = parse_json_body(self)
@@ -652,6 +652,13 @@ def current_result_dir_path() -> Path | None:
     if path.exists() and path.is_dir():
         return path.resolve()
     return None
+
+
+def _rel_display_path(path: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(ROOT_DIR.resolve())).replace("\\", "/")
+    except ValueError:
+        return str(path).replace("\\", "/")
 
 
 def open_local_path(path: Path) -> None:

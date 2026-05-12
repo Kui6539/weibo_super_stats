@@ -397,7 +397,7 @@
 }
 
 .history-preview-dialog {
-  width: min(860px, 96vw);
+  width: min(1020px, 96vw);
   max-height: 88vh;
   display: flex;
   flex-direction: column;

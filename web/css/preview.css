@@ -6,7 +6,7 @@
 }
 
 .preview-panel .markdown-body {
-  max-width: 880px;
+  max-width: 960px;
   margin: 0 auto;
   font-size: 15px;
 }
@@ -76,7 +76,7 @@
   left: 50%;
   display: flex;
   flex-direction: column;
-  width: min(900px, calc(100vw - 32px));
+  width: min(1020px, calc(100vw - 32px));
   max-height: min(760px, calc(100vh - 48px));
   overflow: hidden;
   border: 1px solid var(--glass-border);
