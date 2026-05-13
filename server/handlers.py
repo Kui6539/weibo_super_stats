@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
@@ -450,6 +451,7 @@ class AppRequestHandler(BaseHTTPRequestHandler):
             incomplete_only=bool(payload.get("incomplete_only")),
             include_warnings=bool(payload.get("include_warnings")),
             include_failed=bool(payload.get("include_failed")),
+            selected_run_ids=list(payload.get("selected_run_ids") or []) if isinstance(payload.get("selected_run_ids"), list) else None,
         )
         json_ok(self, data, **data)
 
@@ -463,6 +465,7 @@ class AppRequestHandler(BaseHTTPRequestHandler):
             incomplete_only=bool(payload.get("incomplete_only")),
             include_warnings=bool(payload.get("include_warnings")),
             include_failed=bool(payload.get("include_failed")),
+            selected_run_ids=list(payload.get("selected_run_ids") or []) if isinstance(payload.get("selected_run_ids"), list) else None,
         )
         json_ok(self, data, **data)
 
@@ -534,6 +537,8 @@ class AppRequestHandler(BaseHTTPRequestHandler):
         console_log(f"正在自动读取 {browser_label} Cookie...")
         cookie = get_weibo_cookie_header(browser=browser)
         console_log(f"{browser_label} Cookie 自动读取成功。")
+        console_log(f"等待 3 秒后关闭调试 {browser_label}，确保浏览器登录状态写入本地配置目录。")
+        time.sleep(3)
         debug_browser_closed = close_debug_browser(browser)
         if debug_browser_closed:
             console_log(f"调试 {browser_label} 已自动关闭。")

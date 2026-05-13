@@ -42,7 +42,8 @@ window.WeiboCookie = {
         resetPreflightInline();
         await saveConfigNow();
         const label = data.browser_label || browserLabel();
-        showToast(data.debug_browser_closed ? `Cookie 自动读取成功，调试 ${label} 已关闭。` : "Cookie 自动读取成功。");
+        showToast(data.debug_browser_closed ? `Cookie 自动读取成功，调试 ${label} 已延迟 3 秒关闭。` : "Cookie 自动读取成功。");
+        await checkCookie({ source: "auto" });
       } catch (err) {
         appendClientLog(err.message);
       } finally {
@@ -84,7 +85,7 @@ window.WeiboCookie = {
       }
     }
 
-    async function checkCookie() {
+    async function checkCookie(options = {}) {
       setBusy(controls.checkCookie, true, "正在测试");
       try {
         const data = await api("/api/check-cookie", {
@@ -98,7 +99,7 @@ window.WeiboCookie = {
         setValidationState(stateFromLoginState(result.login_state));
         updateSummary();
         const toastState = result.login_state === "valid" ? "success" : result.login_state === "unknown" ? "info" : "error";
-        showToast(`${result.message || "Cookie 检测完成"}。${result.suggestion ? `建议：${result.suggestion}` : ""}`, toastState);
+        showToast(formatCheckMessage(result, options), toastState);
       } catch (err) {
         setValidationState("failed");
         updateSummary();
@@ -196,6 +197,18 @@ window.WeiboCookie = {
       if (state === "valid") return "valid";
       if (state === "unknown") return "stale";
       return "failed";
+    }
+
+    function formatCheckMessage(result, options = {}) {
+      const prefix = options.source === "auto" ? "已自动完成 Cookie 检测" : result.message || "Cookie 检测完成";
+      const pages = Array.isArray(result.page_results)
+        ? result.page_results
+            .map((item) => `第${item.page}页 ${item.valid_posts ?? item.parsed_posts ?? 0}条有效`)
+            .join("，")
+        : "";
+      const details = pages ? `检测结果：${pages}。` : "";
+      const message = options.source === "auto" ? `${prefix}：${result.message || ""}。` : `${prefix}。`;
+      return `${message}${details}${result.suggestion ? `建议：${result.suggestion}` : ""}`;
     }
 
     return {

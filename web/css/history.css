@@ -492,12 +492,34 @@
 
 .cleanup-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto auto;
+  align-items: center;
   gap: 10px;
   padding: 9px 10px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 7px;
   background: rgba(255, 255, 255, 0.06);
+}
+
+.cleanup-row input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--text);
+}
+
+.cleanup-row span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.cleanup-row small {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.cleanup-row.manual-only {
+  opacity: 0.82;
 }
 
 .cleanup-total {
