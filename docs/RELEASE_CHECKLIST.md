@@ -1,6 +1,6 @@
 # Release Checklist
 
-目标版本：`v0.10.1`
+目标版本：`v0.10.2`
 
 ## 自动检查
 
@@ -28,7 +28,7 @@ scripts\smoke_test.bat
 scripts\make_release_zip.bat
 ```
 
-- [ ] 检查 `dist/weibo_super_stats_v0.10.0.zip` 不包含：
+- [ ] 检查 `dist/weibo_super_stats_v0.10.2.zip` 不包含：
   - `.git/`
   - `.venv/`
   - `output/`
