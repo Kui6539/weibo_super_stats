@@ -87,6 +87,7 @@ WebUI -> HTTP API -> CrawlJob -> crawler -> cache -> export -> manifest
 - `export/manifest.py`
 - `export/reexport.py`
 - `export/report_helpers.py`
+- `export/image_report/`：长图数据适配、分页、HTML 预览和 Playwright 截图导出。
 
 导出器只依赖本地数据和本地文件，不应访问微博网络。
 

@@ -12,13 +12,15 @@ from export.context import ExportContext
 from export.csv_exporter import export_posts_csv
 from export.docx_exporter import export_docx, export_weekly_report_sum_docx
 from export.excel_exporter import export_excel
+from export.image_report import export_image_report
 from export.manifest import build_manifest, write_manifest
 from export.markdown_exporter import export_weekly_report_md
 from export.summary_exporter import analyze_active_period, build_summary, write_summary_txt
+from export.weibo_body_exporter import export_weibo_body
 from modules.comments.ranking import build_comment_leaderboards
 from modules.topic import build_report_title
 
-DEFAULT_EXPORT_TYPES = {"markdown", "docx", "excel", "csv", "summary"}
+DEFAULT_EXPORT_TYPES = {"markdown", "docx", "excel", "csv", "summary", "weibo_body", "long_images"}
 
 
 def reexport_from_cache(
@@ -69,7 +71,11 @@ def reexport_from_cache(
         "xlsx": run_dir / "weibo_posts.xlsx",
         "csv": run_dir / "weibo_posts.csv",
         "summary": run_dir / "weibo_summary.txt",
+        "weibo_body": run_dir / "weibo_body.txt",
         "images": run_dir / "images",
+        "image_report_preview": None,
+        "image_report_pages": [],
+        "image_report_metadata": None,
     }
     ctx = ExportContext(
         run_dir=run_dir,
@@ -98,6 +104,8 @@ def reexport_from_cache(
                 all_posts_summary=all_posts_summary,
                 carryover_hours=int(run_config.get("carryover_hours") or 0) if isinstance(run_config, dict) else 0,
             )
+        if "weibo_body" in export_set:
+            files["weibo_body"] = export_weibo_body(ctx, files["weibo_body"])
         if "docx" in export_set:
             _remove_generated_docx(run_dir)
             docx_paths = export_docx(ctx, run_dir / "weekly_report.docx")
@@ -118,6 +126,12 @@ def reexport_from_cache(
                 leaderboards=leaderboards,
                 preselected=True,
             )
+        if "long_images" in export_set:
+            image_result = export_image_report(ctx)
+            files["image_report_preview"] = image_result.preview
+            files["image_report_pages"] = image_result.pages
+            files["image_report_metadata"] = image_result.metadata
+            warnings.extend(image_result.warnings)
     except PermissionError as err:
         raise ReexportError("文件写入失败", "请关闭正在打开的 Word/Excel 文件后重试。") from err
     except OSError as err:
@@ -127,6 +141,12 @@ def reexport_from_cache(
         previous_manifest = read_manifest(run_dir, {}) or {}
         previous_files = previous_manifest.get("files") if isinstance(previous_manifest, dict) else {}
         files["docx"] = [run_dir / path for path in (previous_files or {}).get("docx", []) or []]
+    if not files["image_report_pages"] and not files["image_report_preview"]:
+        previous_manifest = read_manifest(run_dir, {}) or {}
+        previous_files = previous_manifest.get("files") if isinstance(previous_manifest, dict) else {}
+        files["image_report_preview"] = run_dir / previous_files["image_report_preview"] if (previous_files or {}).get("image_report_preview") else None
+        files["image_report_pages"] = [run_dir / path for path in (previous_files or {}).get("image_report_pages", []) or []]
+        files["image_report_metadata"] = run_dir / previous_files["image_report_metadata"] if (previous_files or {}).get("image_report_metadata") else None
 
     previous = read_manifest(run_dir, {}) or {}
     manifest = build_manifest(
@@ -277,7 +297,18 @@ def _pop_manifest_row(
 def _normalize_export_types(export_types: list[str] | None) -> set[str]:
     if not export_types:
         return set(DEFAULT_EXPORT_TYPES)
-    aliases = {"xlsx": "excel"}
+    aliases = {
+        "xlsx": "excel",
+        "jpg": "long_images",
+        "image": "long_images",
+        "images": "long_images",
+        "image_report": "long_images",
+        "long_image": "long_images",
+        "long-images": "long_images",
+        "weibo": "weibo_body",
+        "weibo-body": "weibo_body",
+        "weibo_body_txt": "weibo_body",
+    }
     result = {aliases.get(str(item).lower(), str(item).lower()) for item in export_types}
     return result & (DEFAULT_EXPORT_TYPES | {"xlsx"}) or set(DEFAULT_EXPORT_TYPES)
 
@@ -342,6 +373,7 @@ def _manifest_to_result(run_dir: Path, manifest: dict[str, Any]) -> dict[str, An
         return str(path if path.is_absolute() else run_dir / path)
 
     docx = [abs_path(item) for item in list((files or {}).get("docx") or []) if item]
+    image_report_pages = [abs_path(item) for item in list((files or {}).get("image_report_pages") or []) if item]
     return {
         "run_dir": str(run_dir),
         "image_dir": abs_path((files or {}).get("images_dir") or (files or {}).get("images")),
@@ -351,6 +383,10 @@ def _manifest_to_result(run_dir: Path, manifest: dict[str, Any]) -> dict[str, An
         "docx_sum": abs_path((files or {}).get("docx_sum")),
         "md": abs_path((files or {}).get("markdown")),
         "summary": abs_path((files or {}).get("summary")),
+        "weibo_body": abs_path((files or {}).get("weibo_body")),
+        "image_report_preview": abs_path((files or {}).get("image_report_preview")),
+        "image_report_pages": image_report_pages,
+        "image_report_metadata": abs_path((files or {}).get("image_report_metadata")),
         "failed_image_count": int(manifest.get("failed_image_count") or 0),
         "warnings": list(manifest.get("warnings") or []),
         "manifest": manifest,

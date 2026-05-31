@@ -109,6 +109,8 @@ window.WeiboProgress = {
         "总 DOCX 已保存",
         "MD 已保存",
         "汇总已保存",
+        "微博正文已保存",
+        "长图预览已保存",
       ].filter((marker) => messages.some((message) => message.includes(marker))).length;
       const hasCandidates = messages.some((message) => message.includes("等待人工筛选"));
       const hasSelectionDone = messages.some((message) => message.includes("人工筛选完成"));
@@ -124,6 +126,7 @@ window.WeiboProgress = {
         messages.some((message) =>
           [
             "已连续5页无时间窗口命中帖子",
+            "已连续5页没有时间窗口内的新增帖子",
             "本页没有帖子数据，停止翻页",
             "补全帖子正文",
             "开始计算评分",
@@ -218,13 +221,13 @@ window.WeiboProgress = {
             "export",
             "生成导出文件",
             completed
-              ? "XLSX、CSV、DOCX、Markdown 与汇总文件已生成"
+              ? "XLSX、CSV、DOCX、Markdown、微博正文、汇总与长图文件已生成"
               : exportSavedCount
-                ? `已生成 ${exportSavedCount}/6 类文件`
+                ? `已生成 ${exportSavedCount}/8 类文件`
                 : "图片下载完成，正在生成导出文件",
-            completed ? 100 : clamp((exportSavedCount / 6) * 100, imageDownloadDone || hasExportFiles ? 20 : 0, 96),
+            completed ? 100 : clamp((exportSavedCount / 8) * 100, imageDownloadDone || hasExportFiles ? 20 : 0, 96),
             completed ? "done" : imageDownloadDone || hasExportFiles ? "active" : "pending",
-            completed ? "6/6 文件" : `${exportSavedCount}/6 文件`,
+            completed ? "8/8 文件" : `${exportSavedCount}/8 文件`,
           ),
         );
       }

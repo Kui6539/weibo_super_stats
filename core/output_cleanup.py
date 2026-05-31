@@ -267,14 +267,27 @@ def _manifest_output_paths(files: dict[str, Any]) -> list[str]:
         if text and text not in rows:
             rows.append(text)
 
-    for key in ("markdown", "excel", "xlsx", "csv", "summary", "docx_sum", "images_dir", "images"):
+    for key in (
+        "markdown",
+        "excel",
+        "xlsx",
+        "csv",
+        "summary",
+        "weibo_body",
+        "docx_sum",
+        "images_dir",
+        "images",
+        "image_report_preview",
+        "image_report_metadata",
+    ):
         add(files.get(key))
-    docx = files.get("docx")
-    if isinstance(docx, list):
-        for item in docx:
-            add(item)
-    else:
-        add(docx)
+    for list_key in ("docx", "image_report_pages"):
+        value = files.get(list_key)
+        if isinstance(value, list):
+            for item in value:
+                add(item)
+        else:
+            add(value)
     return rows
 
 

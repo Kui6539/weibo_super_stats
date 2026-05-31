@@ -14,6 +14,7 @@
 - 结构化任务状态、阶段进度、任务取消和终端滚动日志。
 - 抓取帖子、补全文本、评论分析、评分排序和人工筛选。
 - 导出 Markdown、DOCX、XLSX、CSV、summary。
+- 导出适合微博发图的周报长图 JPG，并生成 `preview.html` 供人工检查排版。
 - 每次任务生成 `cache/`，保存中间结果。
 - 支持基于 `cache/` 离线重新生成报告，不重新请求微博。
 - 历史任务中心可扫描 `output/`、浏览历史结果、检查缓存并一键重新生成报告。
@@ -93,6 +94,9 @@ pip install -r requirements.txt
 - `weibo_posts.xlsx`
 - `weibo_posts.csv`
 - `weibo_summary.txt`
+- `image_report/preview.html`
+- `image_report/page_01.jpg`
+- `image_report/metadata.json`
 - `images/`
 - `cache/`
 - `manifest.json`
@@ -127,6 +131,7 @@ pip install -r requirements.txt
 - 微博页面和接口变化可能导致抓取失败。
 - 请合理设置请求间隔，避免请求过快。
 - Cookie 明文保存在本地配置中，工具提供“清空 Cookie”功能。
+- 长图 JPG 依赖 Playwright 调用本机 Edge/Chromium 截图；若浏览器组件不可用，会保留 `preview.html` 并给出警告。
 - 不要提交本地配置、输出目录、CDP profile 或真实 Cookie。
 - 不要提交 `weibo_stats_history.json`，它是本地历史索引。
 - 重新生成报告依赖完整 `cache/`，旧运行目录如果没有缓存，需要重新执行一次任务。

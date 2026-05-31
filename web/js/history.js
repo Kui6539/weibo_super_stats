@@ -114,7 +114,7 @@ window.WeiboHistory = {
     function renderItem(item) {
       const files = item.files || {};
       const title = item.super_topic_name || item.super_topic_id || item.super_topic || "未知超话";
-      const badges = ["markdown", "docx", "excel", "csv", "summary", "images"]
+      const badges = ["markdown", "docx", "excel", "csv", "summary", "weibo_body", "images"]
         .map((key) => `<span class="mini-badge ${files[key] ? "ok" : ""}">${fileLabel(key)}</span>`)
         .join("");
       return `
@@ -319,7 +319,7 @@ window.WeiboHistory = {
     }
 
     function fileLabel(key) {
-      return { markdown: "MD", docx: "DOCX", excel: "XLSX", csv: "CSV", summary: "summary", images: "images" }[key] || key;
+      return { markdown: "MD", docx: "DOCX", excel: "XLSX", csv: "CSV", summary: "summary", weibo_body: "微博正文", images: "images" }[key] || key;
     }
 
     return { load, scan, render, handleClick, closeDetail, showPreview, closePreview, toggleDropdown, openDropdown, closeDropdown, handleDocumentClick };

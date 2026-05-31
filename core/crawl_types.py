@@ -12,7 +12,7 @@ class CrawlError(Exception):
 class CrawlConfig:
     super_topic: str
     cookie: str
-    max_pages: int = 30
+    max_pages: int = 80
     pause_seconds: float = 1.0
     days_window: int = 7
     topic_comment_factor: float = 1.0

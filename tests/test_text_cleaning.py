@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import unittest
 
+from export.report_helpers import clean_image_report_text, clean_report_text
 from modules.text_cleaning import clean_topic_tags, collapse_blank_lines, normalize_weibo_text, strip_html_text
 
 
 class TextCleaningTests(unittest.TestCase):
     def test_clean_topic_tags(self) -> None:
         self.assertEqual(clean_topic_tags("#warma超话# 正文内容"), "正文内容")
+        self.assertEqual(clean_topic_tags("#warma[超话]# 正文内容"), "正文内容")
+        self.assertEqual(clean_topic_tags("#Warma【超话】# 正文内容"), "正文内容")
 
     def test_preserve_newlines(self) -> None:
         text = clean_topic_tags("第一行\n#warma超话#\n第二行", preserve_newlines=True)
@@ -23,6 +26,10 @@ class TextCleaningTests(unittest.TestCase):
 
     def test_collapse_blank_lines(self) -> None:
         self.assertEqual(collapse_blank_lines("a\n\n\nb"), "a\n\nb")
+
+    def test_image_report_text_preserves_weibo_emoticon_tokens(self) -> None:
+        self.assertEqual(clean_report_text("你好[哈哈]"), "你好(*≧▽≦)")
+        self.assertEqual(clean_image_report_text("你好[哈哈]"), "你好[哈哈]")
 
 
 if __name__ == "__main__":

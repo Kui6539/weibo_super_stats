@@ -113,6 +113,8 @@ def build_export_context_from_fixtures(tmpdir: str | Path) -> ExportContext:
             "super_topic": "100808abc",
             "super_topic_name": "测试超话",
             "report_title": "测试超话周报",
+            "window_start": "2026-05-01 04:00",
+            "window_end": "2026-05-08 04:00",
             "leaderboards": leaderboards,
         },
         stats=stats,

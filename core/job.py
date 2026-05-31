@@ -38,9 +38,12 @@ from crawler import (
     write_summary_txt,
 )
 from export.context import ExportContext
+from export.image_report import export_image_report
 from export.manifest import build_manifest, write_manifest
 from export.summary_exporter import analyze_active_period, build_summary
+from export.weibo_body_exporter import export_weibo_body
 from modules.comments.ranking import build_comment_leaderboards
+from modules.text_cleaning import remove_weibo_private_chars
 from modules.topic import build_report_title
 
 ACTIVE_STATUSES = {"running", "awaiting_selection", "exporting"}
@@ -56,7 +59,8 @@ def console_log(message: str, timestamp: str | None = None) -> None:
 
 
 def compact_content(value: Any, max_chars: int = 420) -> str:
-    content = re.sub(r"\s+", " ", str(value or "")).strip()
+    content = remove_weibo_private_chars(str(value or ""))
+    content = re.sub(r"\s+", " ", content).strip()
     if len(content) > max_chars:
         return content[:max_chars] + "..."
     return content
@@ -94,7 +98,7 @@ def split_multi_value(value: Any) -> list[str]:
 
 
 def serialize_candidate(post: dict, index: int) -> dict[str, Any]:
-    content = str(post.get("content", "") or "")
+    content = remove_weibo_private_chars(str(post.get("content", "") or "")).strip()
     image_count = to_int(post.get("image_count"))
     if image_count <= 0:
         image_count = len(split_multi_value(post.get("original_image_urls")))
@@ -761,7 +765,7 @@ class CrawlJob:
 
             self.check_cancelled()
             self.set_stage("export", message="开始生成导出文件")
-            export_total = 7
+            export_total = 9
             export_current = 0
             self.update_progress(current=0, total=export_total, percent=0, message="正在准备导出文件", stage="export")
             summary = build_summary(selected_posts)
@@ -782,6 +786,7 @@ class CrawlJob:
             report_docx_path = run_dir / "weekly_report.docx"
             report_sum_docx_path = run_dir / "weekly_report_sum.docx"
             report_md_path = run_dir / "weekly_report.md"
+            weibo_body_path = run_dir / "weibo_body.txt"
 
             self.check_cancelled()
             export_posts_xlsx(selected_posts, xlsx_path)
@@ -833,6 +838,42 @@ class CrawlJob:
             export_current += 1
             self._mark_export_result("Markdown", report_md_path, export_current, export_total)
 
+            warnings = []
+            if failed_image_count:
+                warnings.append(f"约 {failed_image_count} 张图片未成功保存，可在导出目录中检查 images 文件夹。")
+            export_ctx = ExportContext(
+                run_dir=run_dir,
+                selected_posts=selected_posts,
+                all_posts=posts_all,
+                config=self._run_config_payload(run_dir) | {"candidate_count": len(candidates), "leaderboards": leaderboards},
+                stats=summary,
+                images_manifest=images_manifest,
+            )
+            files = {
+                "markdown": report_md_path,
+                "docx": report_docx_paths,
+                "docx_sum": report_sum_docx,
+                "xlsx": xlsx_path,
+                "csv": csv_path,
+                "summary": txt_path,
+                "weibo_body": None,
+                "images": image_dir,
+                "image_report_preview": None,
+                "image_report_pages": [],
+                "image_report_metadata": None,
+            }
+            files["weibo_body"] = export_weibo_body(export_ctx, weibo_body_path)
+            export_current += 1
+            self._mark_export_result("微博正文", files["weibo_body"], export_current, export_total)
+            self.check_cancelled()
+            image_report = export_image_report(export_ctx)
+            files["image_report_preview"] = image_report.preview
+            files["image_report_pages"] = image_report.pages
+            files["image_report_metadata"] = image_report.metadata
+            warnings.extend(image_report.warnings)
+            export_current += 1
+            self._mark_export_result("长图报告", image_report.preview, export_current, export_total)
+
             self.add_log(f"抓取完成，共 {summary['total_posts']} 条帖子。", level="success", stage="export")
             self.add_log(f"Excel 已保存：{xlsx_path}", level="success", stage="export")
             self.add_log(f"CSV 已保存：{csv_path}", level="success", stage="export")
@@ -843,30 +884,16 @@ class CrawlJob:
             self.add_log(f"总 DOCX 已保存：{report_sum_docx}（{size_mb:.2f} MB）", level="success", stage="export")
             self.add_log(f"MD 已保存：{report_md_path}", level="success", stage="export")
             self.add_log(f"汇总已保存：{txt_path}", level="success", stage="export")
+            self.add_log(f"微博正文已保存：{files['weibo_body']}", level="success", stage="export")
+            self.add_log(f"长图预览已保存：{image_report.preview}", level="success", stage="export")
+            for path in image_report.pages:
+                self.add_log(f"长图 JPG 已保存：{path}", level="success", stage="export")
             if failed_image_count:
                 self.add_log(f"图片下载警告：约 {failed_image_count} 张图片未成功保存。", level="warning", stage="export")
+            for warning in image_report.warnings:
+                self.add_log(warning, level="warning", stage="export")
             self.add_log(f"本次导出目录：{run_dir}", level="success", stage="export")
 
-            warnings = []
-            if failed_image_count:
-                warnings.append(f"约 {failed_image_count} 张图片未成功保存，可在导出目录中检查 images 文件夹。")
-            files = {
-                "markdown": report_md_path,
-                "docx": report_docx_paths,
-                "docx_sum": report_sum_docx,
-                "xlsx": xlsx_path,
-                "csv": csv_path,
-                "summary": txt_path,
-                "images": image_dir,
-            }
-            export_ctx = ExportContext(
-                run_dir=run_dir,
-                selected_posts=selected_posts,
-                all_posts=posts_all,
-                config=self._run_config_payload(run_dir) | {"candidate_count": len(candidates)},
-                stats=summary,
-                images_manifest=images_manifest,
-            )
             manifest = build_manifest(export_ctx, files, warnings=warnings, failed_images=failed_image_count)
             manifest_path = write_manifest(run_dir, manifest)
             try:
@@ -884,6 +911,10 @@ class CrawlJob:
                 "docx_sum": str(report_sum_docx),
                 "md": str(report_md_path),
                 "summary": str(txt_path),
+                "weibo_body": str(files["weibo_body"]),
+                "image_report_preview": str(image_report.preview),
+                "image_report_pages": [str(path) for path in image_report.pages],
+                "image_report_metadata": str(image_report.metadata),
                 "manifest_path": str(manifest_path),
                 "failed_image_count": failed_image_count,
                 "warnings": warnings,

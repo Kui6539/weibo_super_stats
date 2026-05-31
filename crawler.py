@@ -66,6 +66,11 @@ from modules.time_utils import parse_weibo_time
 from modules.topic import build_report_title as _topic_build_report_title
 from modules.topic import extract_super_topic_name as _topic_extract_super_topic_name
 from modules.topic import normalize_super_topic_name as _topic_normalize_super_topic_name
+from modules.weibo_chaohua_api import CHAOHUA_API_URL
+from modules.weibo_chaohua_api import extract_chaohua_topic_name as _chaohua_extract_topic_name
+from modules.weibo_chaohua_api import initial_chaohua_params as _chaohua_initial_params
+from modules.weibo_chaohua_api import next_chaohua_params as _chaohua_next_params
+from modules.weibo_chaohua_api import parse_chaohua_posts_from_json as _chaohua_parse_posts_from_json
 from modules.weibo_html_parser import extract_feed_html_from_page as _html_extract_feed_html_from_page
 from modules.weibo_html_parser import extract_original_image_urls as _html_extract_original_image_urls
 from modules.weibo_html_parser import is_inside_forwarded_content as _html_is_inside_forwarded_content
@@ -160,18 +165,42 @@ class WeiboSuperTopicCrawler:
         seen_post_ids: set[str] = set()
         last_page_sig: tuple[str, ...] | None = None
         consecutive_same_pages = 0
-        no_hit_streak = 0
+        no_new_hit_streak = 0
+        use_chaohua_api = False
+        chaohua_next_params: dict[str, Any] | None = None
+        page_limit = max(1, min(int(config.max_pages or 80), 80))
+        if page_limit < int(config.max_pages or 80):
+            self._log(f"按周报抓取规则，本次最多翻到第 {page_limit} 页。")
 
-        for page in range(1, config.max_pages + 1):
+        for page in range(1, page_limit + 1):
             self._log(f"抓取第 {page} 页...")
-            page_html = self._fetch_super_index_page(referer, page)
-            if not self.topic_name:
-                self.topic_name = extract_super_topic_name(page_html, config.super_topic)
-                self.report_title = build_report_title(self.topic_name, config.super_topic)
-                if self.topic_name:
-                    self._log(f"已识别超话名称：{self.topic_name}")
-            feed_html = extract_feed_html_from_page(page_html)
-            page_posts = parse_posts_from_html(feed_html)
+            if use_chaohua_api:
+                if page > 1 and not chaohua_next_params:
+                    self._log("新版超话接口没有更多页，停止翻页。")
+                    break
+                page_data = self._fetch_chaohua_page(topic_id, chaohua_next_params or _chaohua_initial_params(topic_id))
+                self._apply_chaohua_topic_name(page_data, config.super_topic)
+                page_posts = _chaohua_parse_posts_from_json(page_data)
+                chaohua_next_params = _chaohua_next_params(topic_id, page_data)
+            else:
+                page_html = self._fetch_super_index_page(referer, page)
+                if not self.topic_name:
+                    self.topic_name = extract_super_topic_name(page_html, config.super_topic)
+                    self.report_title = build_report_title(self.topic_name, config.super_topic)
+                    if self.topic_name:
+                        self._log(f"已识别超话名称：{self.topic_name}")
+                try:
+                    feed_html = extract_feed_html_from_page(page_html)
+                    page_posts = parse_posts_from_html(feed_html)
+                except (ValueError, CrawlError):
+                    if page != 1 or "FM.view(" in page_html:
+                        raise
+                    self._log("旧版 FM.view 数据块不存在，切换新版超话接口。")
+                    use_chaohua_api = True
+                    page_data = self._fetch_chaohua_page(topic_id, _chaohua_initial_params(topic_id))
+                    self._apply_chaohua_topic_name(page_data, config.super_topic)
+                    page_posts = _chaohua_parse_posts_from_json(page_data)
+                    chaohua_next_params = _chaohua_next_params(topic_id, page_data)
             if not page_posts:
                 self._log("本页没有帖子数据，停止翻页。")
                 break
@@ -184,12 +213,13 @@ class WeiboSuperTopicCrawler:
             )
             if sig and last_page_sig == sig:
                 consecutive_same_pages += 1
-                self._log(f"检测到重复页内容（连续{consecutive_same_pages + 1}页相同），继续翻页...")
+                self._log(f"检测到重复页内容（连续{consecutive_same_pages + 1}页相同），本页只做去重，不作为停页依据。")
             else:
                 consecutive_same_pages = 0
             last_page_sig = sig if sig else last_page_sig
 
             page_recent = 0
+            page_kept = 0
             for post in page_posts:
                 post_id = str(post.get("post_id") or "").strip()
                 post_dt = parse_publish_datetime(str(post.get("publish_time") or ""))
@@ -206,21 +236,34 @@ class WeiboSuperTopicCrawler:
                 if post_id:
                     seen_post_ids.add(post_id)
                 all_posts.append(post)
+                page_kept += 1
 
             if use_fixed_window:
-                self._log(f"第 {page} 页读取 {len(page_posts)} 条，窗口内命中 {page_recent} 条。")
+                self._log(f"第 {page} 页读取 {len(page_posts)} 条，窗口内命中 {page_recent} 条，新增 {page_kept} 条。")
             else:
-                self._log(f"第 {page} 页读取 {len(page_posts)} 条，近 {config.days_window} 天命中 {page_recent} 条。")
+                self._log(f"第 {page} 页读取 {len(page_posts)} 条，近 {config.days_window} 天命中 {page_recent} 条，新增 {page_kept} 条。")
 
-            # 新停页规则：只有连续5页都没有命中时间窗口，才停止翻页
-            if page_recent == 0:
-                no_hit_streak += 1
-                self._log(f"连续无命中页：{no_hit_streak}/5")
+            # 停页规则：连续5页没有“时间窗口内的新增帖子”才停止。
+            # 如果接口反复返回同一批窗口内帖子，只计为重复命中，不重置停页计数。
+            if page_kept == 0:
+                no_new_hit_streak += 1
+                if page_recent > 0:
+                    self._log(f"本页窗口内帖子均已收集，连续无新增命中页：{no_new_hit_streak}/5")
+                else:
+                    self._log(f"连续无新增命中页：{no_new_hit_streak}/5")
             else:
-                no_hit_streak = 0
+                no_new_hit_streak = 0
 
-            if no_hit_streak >= 5:
-                self._log("已连续5页无时间窗口命中帖子，停止翻页。")
+            if no_new_hit_streak >= 5:
+                self._log("已连续5页没有时间窗口内的新增帖子，停止翻页。")
+                break
+
+            if use_chaohua_api and not chaohua_next_params:
+                self._log("新版超话接口没有更多页，停止翻页。")
+                break
+
+            if page >= page_limit:
+                self._log(f"已翻到最大页数 {page_limit}，停止抓取。")
                 break
 
             time.sleep(max(config.pause_seconds, 0))
@@ -253,6 +296,14 @@ class WeiboSuperTopicCrawler:
         self._emit_stage_cache("posts_scored", all_posts)
         return all_posts
 
+    def _apply_chaohua_topic_name(self, page_data: dict[str, Any], super_topic: str) -> None:
+        if self.topic_name:
+            return
+        self.topic_name = _chaohua_extract_topic_name(page_data)
+        self.report_title = build_report_title(self.topic_name, super_topic)
+        if self.topic_name:
+            self._log(f"已识别超话名称：{self.topic_name}")
+
     def _fetch_super_index_page(self, super_index_url: str, page: int) -> str:
         resp = self.session.get(
             super_index_url,
@@ -266,6 +317,32 @@ class WeiboSuperTopicCrawler:
         if resp.status_code >= 400:
             raise CrawlError(f"加载超话页面失败，HTTP {resp.status_code}")
         return text
+
+    def _fetch_chaohua_page(self, topic_id: str, params: dict[str, Any]) -> dict[str, Any]:
+        resp = self.session.get(
+            CHAOHUA_API_URL,
+            params=params,
+            headers={
+                "Referer": f"https://weibo.com/p/{topic_id}/super_index",
+                "X-Requested-With": "XMLHttpRequest",
+                "Accept": "application/json, text/plain, */*",
+            },
+            timeout=20,
+        )
+        text = resp.text.strip()
+        if "<title>Sina Visitor System</title>" in text or "passport.weibo.com/visitor" in resp.url:
+            raise CrawlError("微博返回访客验证页面。请使用已登录账号 Cookie 重试。")
+        if resp.status_code >= 400:
+            raise CrawlError(f"加载新版超话接口失败，HTTP {resp.status_code}")
+        try:
+            data = resp.json()
+        except ValueError as err:
+            raise CrawlError("新版超话接口返回内容不是 JSON，无法解析帖子列表。") from err
+        if not isinstance(data, dict):
+            raise CrawlError("新版超话接口返回格式异常，无法解析帖子列表。")
+        if data.get("code") and not data.get("items"):
+            raise CrawlError(f"新版超话接口返回异常：{data.get('msg') or data.get('code')}")
+        return data
 
     def enrich_score_fields(self, posts: list[dict], config: CrawlConfig) -> None:
         rows = list(posts)

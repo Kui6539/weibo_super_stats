@@ -15,6 +15,7 @@
 - `/api/report-preview` 和 `/api/report-asset` 支持 `md_path` 查询参数，可预览非当前任务的报告。
 - `/api/open-result-dir` 支持 POST body 中传入 `run_dir`，可打开非当前任务的导出目录。
 - 所有 Markdown 窗口标题栏显示相对路径而非绝对路径。
+- 周报支持导出微博发布用长图：生成 `image_report/preview.html`、`page_*.jpg` 和 `metadata.json`。
 
 ### Changed
 

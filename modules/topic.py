@@ -19,10 +19,10 @@ def normalize_super_topic_name(value: str) -> str:
     raw = raw.strip().strip("#")
     raw = re.sub(r"^https?://\S+$", "", raw, flags=re.I)
     raw = re.sub(r"^100808[0-9a-fA-F]+$", "", raw)
-    raw = re.sub(r"\s*[-_｜|].*$", "", raw)
+    raw = re.sub(r"\s*[-_~｜|].*$", "", raw)
     raw = re.sub(r"(?:微博)?超话(?:社区|详情|首页|主页)?$", "", raw)
     raw = re.sub(r"(?:的)?微博(?:主页)?$", "", raw)
-    raw = raw.strip(" #　-—_｜|：:")
+    raw = raw.strip(" #　-—~｜|：:")
     if not raw or raw.lower() in {"weibo", "m.weibo.cn", "weibo.com"}:
         return ""
     return raw[:40]
@@ -42,7 +42,7 @@ def extract_super_topic_name(page_html: str, fallback: str | None = None) -> str
     ):
         candidates.extend(strip_html_text(match.group(1)) for match in re.finditer(pattern, html, flags=re.I | re.S))
 
-    topic_match = re.search(r"#?\s*([^#<>{}\"'，,。；;｜|]{1,40}?)\s*超话", html)
+    topic_match = re.search(r"#?\s*([^#<>{}\"'，。；;~｜|]{1,40}?)\s*超话", html)
     if topic_match:
         candidates.append(topic_match.group(1))
 

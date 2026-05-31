@@ -59,8 +59,12 @@ def build_manifest(
             "xlsx": _rel(run_dir, files.get("xlsx") or files.get("excel")),
             "csv": _rel(run_dir, files.get("csv")),
             "summary": _rel(run_dir, files.get("summary")),
+            "weibo_body": _rel(run_dir, files.get("weibo_body")),
             "images_dir": _rel(run_dir, files.get("images") or files.get("images_dir")),
             "images": _rel(run_dir, files.get("images") or files.get("images_dir")),
+            "image_report_preview": _rel(run_dir, files.get("image_report_preview")),
+            "image_report_pages": [_rel(run_dir, path) for path in files.get("image_report_pages", []) or []],
+            "image_report_metadata": _rel(run_dir, files.get("image_report_metadata")),
         },
         "cache": {
             "run_config": "cache/run_config.json",
@@ -95,8 +99,6 @@ def _rel(run_dir: Path, raw_path: Any) -> str | None:
         return None
     path = Path(text)
     try:
-        if path.is_absolute():
-            return str(path.resolve().relative_to(run_dir.resolve())).replace("\\", "/")
+        return str(path.resolve().relative_to(run_dir.resolve())).replace("\\", "/")
     except Exception:
         return text.replace("\\", "/")
-    return text.replace("\\", "/")

@@ -12,6 +12,7 @@ from core.errors import (
     VisitorSystemError,
     WeiboStatsError,
 )
+from modules.weibo_chaohua_api import CHAOHUA_API_URL, initial_chaohua_params, parse_chaohua_posts_from_json
 from modules.weibo_html_parser import extract_feed_html_from_page, parse_posts_from_html
 from modules.weibo_url import parse_super_topic_id
 
@@ -140,6 +141,8 @@ class WeiboClient:
                     headers={"Referer": "https://weibo.com/"},
                 )
                 parsed_posts, valid_posts = _count_posts_in_super_page(response.text)
+                if page == 1 and parsed_posts == 0 and "FM.view(" not in response.text:
+                    parsed_posts, valid_posts = self._count_posts_in_chaohua_api(topic_id)
                 page_results.append(
                     {"page": page, "parsed_posts": parsed_posts, "valid_posts": valid_posts, "status": "ok"}
                 )
@@ -194,6 +197,28 @@ class WeiboClient:
             "message": "连续检测 3 页均未解析到有效帖子或帖子互动数据均为 0",
             "suggestion": "请在调试浏览器中打开目标超话，确认能看到帖子且点赞/评论/转发数据正常显示后，再重新读取 Cookie。",
         }
+
+    def _count_posts_in_chaohua_api(self, topic_id: str) -> tuple[int, int]:
+        response = self._request(
+            "GET",
+            CHAOHUA_API_URL,
+            params=initial_chaohua_params(topic_id),
+            headers={
+                "Referer": f"https://weibo.com/p/{topic_id}/super_index",
+                "X-Requested-With": "XMLHttpRequest",
+                "Accept": "application/json, text/plain, */*",
+            },
+        )
+        try:
+            data = response.json()
+        except ValueError:
+            return 0, 0
+        if not isinstance(data, dict):
+            return 0, 0
+        posts = parse_chaohua_posts_from_json(data)
+        parsed_posts = [post for post in posts if str(post.get("post_id") or "").strip()]
+        valid_posts = [post for post in parsed_posts if _post_has_valid_interaction_data(post)]
+        return len(parsed_posts), len(valid_posts)
 
     def _request(self, method: str, url: str, **kwargs: Any) -> requests.Response:
         last_error: Exception | None = None

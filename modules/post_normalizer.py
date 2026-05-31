@@ -4,6 +4,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from modules.text_cleaning import remove_weibo_private_chars
+
 
 DEFAULT_POST_FIELDS: dict[str, Any] = {
     "post_id": "",
@@ -33,7 +35,8 @@ def ensure_post_fields(post: dict[str, Any]) -> dict[str, Any]:
 
 def normalize_post_dict(post: dict[str, Any]) -> dict[str, Any]:
     normalized = ensure_post_fields(post)
-    normalized["content"] = re.sub(r"\s+", " ", str(normalized.get("content") or "")).strip()
+    content = remove_weibo_private_chars(str(normalized.get("content") or ""))
+    normalized["content"] = re.sub(r"\s+", " ", content).strip()
     normalized["user_name"] = str(normalized.get("user_name") or "").strip()
     normalized["post_url"] = str(normalized.get("post_url") or "").strip()
     return normalized

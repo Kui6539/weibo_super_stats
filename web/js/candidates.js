@@ -73,7 +73,8 @@ window.WeiboCandidates = {
       const index = Number(item.index);
       const checked = candidateSelections.has(index);
       const expanded = candidateExpanded.has(index);
-      const content = expanded ? item.content_full || item.content || "" : item.content_excerpt || item.content || "";
+      const rawContent = expanded ? item.content_full || item.content || "" : item.content_excerpt || item.content || "";
+      const content = cleanCandidateText(rawContent);
       const imageCount = Number(item.image_count || 0);
       const previewPaths = Array.isArray(item.image_preview_paths) ? item.image_preview_paths : [];
       const previews = previewPaths
@@ -120,6 +121,13 @@ window.WeiboCandidates = {
       if (!text) return "";
       if (/^https?:\/\//i.test(text) || text.startsWith("/")) return text;
       return "";
+    }
+
+    function cleanCandidateText(value) {
+      return String(value || "")
+        .replace(/[\u200b-\u200f\u202a-\u202e\ufeff\ufe0f\ufffc]/g, "")
+        .replace(/[\ue000-\uf8ff]/g, "")
+        .trim();
     }
 
     function updatePickCount(job = getCurrentJob?.()) {

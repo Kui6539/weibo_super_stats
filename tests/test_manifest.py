@@ -25,7 +25,11 @@ class ManifestTests(unittest.TestCase):
                     "xlsx": run_dir / "a.xlsx",
                     "csv": run_dir / "a.csv",
                     "summary": run_dir / "summary.txt",
+                    "weibo_body": run_dir / "weibo_body.txt",
                     "images": run_dir / "images",
+                    "image_report_preview": run_dir / "image_report" / "preview.html",
+                    "image_report_pages": [run_dir / "image_report" / "page_01.jpg"],
+                    "image_report_metadata": run_dir / "image_report" / "metadata.json",
                 },
             )
             self.assertIn("markdown", manifest["files"])
@@ -33,7 +37,11 @@ class ManifestTests(unittest.TestCase):
             self.assertIn("xlsx", manifest["files"])
             self.assertIn("csv", manifest["files"])
             self.assertIn("summary", manifest["files"])
+            self.assertIn("weibo_body", manifest["files"])
             self.assertIn("images", manifest["files"])
+            self.assertIn("image_report_preview", manifest["files"])
+            self.assertIn("image_report_pages", manifest["files"])
+            self.assertIn("image_report_metadata", manifest["files"])
             self.assertIn("cache", manifest)
             self.assertEqual(manifest["files"]["markdown"], "report.md")
 

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from modules.crawler_filters import should_exclude_post
-from modules.text_cleaning import clean_topic_tags, collapse_blank_lines, normalize_weibo_text
+from modules.text_cleaning import clean_topic_tags, collapse_blank_lines, normalize_weibo_text, remove_weibo_private_chars
 from modules.time_utils import parse_weibo_time
 
 
@@ -86,7 +86,7 @@ def format_hot_comment_text(comment: dict[str, Any]) -> str:
     if text:
         return text
     if user and split_multi_values(str(comment.get("image_local_paths") or ""), sep="|"):
-        return f"{user}： （图片评论）"
+        return f"{user}：（图片评论）"
     return ""
 
 
@@ -94,10 +94,13 @@ def clean_report_text(text: str) -> str:
     raw = clean_topic_tags(collapse_blank_lines(text), preserve_newlines=True)
     raw = replace_weibo_emoticons(raw)
     raw = replace_unicode_emoji(raw)
-    # 去掉微博字体图标的私有区字符、零宽字符，避免周报里出现乱码方块。
-    raw = re.sub(r"[\u200b-\u200f\u202a-\u202e\ufeff]", "", raw)
-    raw = raw.replace("\ufe0f", "")
-    raw = re.sub(r"[\ue000-\uf8ff]", "", raw)
+    raw = remove_weibo_private_chars(raw)
+    return collapse_blank_lines(raw)
+
+
+def clean_image_report_text(text: str) -> str:
+    raw = clean_topic_tags(collapse_blank_lines(text), preserve_newlines=True)
+    raw = remove_weibo_private_chars(raw)
     return collapse_blank_lines(raw)
 
 
@@ -116,7 +119,7 @@ def strip_url_like_text(text: str) -> str:
 
 def simplify_hot_comment(text: str) -> str:
     raw = normalize_weibo_text(text)
-    match = re.match(r"^(.*?)（赞.*?）:\s*(.*)$", raw)
+    match = re.match(r"^(.*?)（赞.*?）\s*(.*)$", raw)
     if match:
         user = normalize_weibo_text(match.group(1))
         content = normalize_weibo_text(match.group(2))
@@ -126,94 +129,86 @@ def simplify_hot_comment(text: str) -> str:
 
 def replace_weibo_emoticons(text: str) -> str:
     mapping = {
-        "抱一抱": "(づ｡◕‿‿◕｡)づ",
-        "抱抱": "(づ￣ 3￣)づ",
-        "打call": "ヾ(≧▽≦*)o",
-        "哈哈": "(๑>◡<๑)",
+        "抱一抱": "(つ´ω`)つ",
+        "抱抱": "(つ´ω`)つ",
+        "打call": "٩(ˊᗜˋ*)و",
+        "哈哈": "(*≧▽≦)",
         "嘻嘻": "(*^▽^*)",
-        "可爱": "(=^･ω･^=)",
-        "爱你": "( ˘ ³˘)♥",
-        "亲亲": "( ˘ ³˘)♥",
-        "鼓掌": "(*'ω'ﾉﾉﾞ☆",
-        "送花花": "(✿◡‿◡)",
-        "赞": "(๑•̀ㅂ•́)و",
-        "ok": "(๑•̀ㅂ•́)و",
-        "笑cry": "(≧▽≦;)",
-        "笑哭": "(≧▽≦;)",
-        "偷笑": "(￣▽￣)~*",
-        "憨笑": "(≧∀≦)ゞ",
-        "doge": "(￣▽￣)",
-        "doge脸": "(￣▽￣)",
-        "二哈": "(哈▽哈)",
-        "允悲": "(；▽；)",
-        "泪": "(T_T)",
-        "流泪": "(；﹏；)",
-        "泪奔": "(ಥ_ಥ)",
-        "悲伤": "(Q_Q)",
+        "笑cry": "(*≧▽≦)ﾉｼ",
+        "笑哭": "(*≧▽≦)ﾉｼ",
+        "偷笑": "( *´艸`)",
+        "憧憬": "(*´▽`*)",
+        "可爱": "(｡･ω･｡)",
+        "爱你": "(´▽`ʃ♡ƪ)",
+        "亲亲": "(づ￣ ³￣)づ",
+        "鼓掌": "(*'▽'*)ﾉﾞ",
+        "送花花": "(ﾉ´ヮ`)ﾉ*:･ﾟ✧",
+        "赞": "(๑•̀ㅂ•́)و✧",
+        "ok": "(๑•̀ㅂ•́)و✧",
+        "泪": "(；ω；)",
+        "流泪": "(；ω；)",
+        "泪奔": "(；ω；)",
+        "悲伤": "(｡•́︿•̀｡)",
         "大哭": "(╥﹏╥)",
         "委屈": "(｡•́︿•̀｡)",
-        "可怜": "(´；ω；`)",
-        "思考": "( •̀ .̫ •́ )",
-        "疑问": "( ?_? )",
+        "允悲": "(；´д｀)ゞ",
+        "苦涩": "(｡•́︿•̀｡)",
+        "哼": "(｀へ´*)ノ",
+        "doge": "( •̀ ω •́ )",
+        "doge脸": "( •̀ ω •́ )",
+        "二哈": "(´･ᴗ･`)",
+        "疑问": "(・_・?)",
+        "思考": "(｡･ˇ_ˇ･｡)",
+        "裂开": "(つд⊂)",
         "跪了": "_(:3」∠)_",
         "馋嘴": "(๑´ڡ`๑)",
         "干饭人": "(๑´ڡ`๑)",
-        "裂开": "(⊙_⊙;)",
-        "苦涩": "(＞﹏＜)",
-        "哇": "(✧ω✧)",
-        "心": "<3",
-        "给你小心心": "<3<3",
+        "心": "♡",
+        "给你小心心": "♡♡",
     }
 
     def repl(match: re.Match[str]) -> str:
         key = normalize_weibo_text(match.group(1))
-        return mapping.get(key, "(๑•ᴗ•๑)")
+        return mapping.get(key, "(｡･ω･｡)")
 
     return re.sub(r"\[([^\[\]]{1,24})\]", repl, text)
 
 
 def replace_unicode_emoji(text: str) -> str:
     emoji_map = {
-        "😀": "(*^_^*)",
-        "😄": "(*^o^*)",
-        "😁": "(๑>◡<๑)",
-        "😆": "(≧ω≦)",
-        "😊": "(*^_^*)",
-        "😍": "(=^.^=)",
-        "🥰": "(=^.^=)",
-        "😘": "(*^3^*)",
-        "😋": "(^q^)",
-        "🤗": "(*^_^*)",
-        "😇": "(^_^)v",
-        "😎": "B-)",
-        "😂": "(≧▽≦;)",
-        "🤣": "xD",
-        "😹": "(=^▽^=;)",
-        "😅": "(*^_^*;)",
-        "😢": "(；﹏；)",
+        "😄": "(*^▽^*)",
+        "😃": "(*^▽^*)",
+        "😁": "(*≧▽≦)",
+        "😂": "(*≧▽≦)ﾉｼ",
+        "🤣": "(*≧▽≦)ﾉｼ",
+        "😊": "(*´▽`*)",
+        "🥰": "(´▽`ʃ♡ƪ)",
+        "😍": "(´▽`ʃ♡ƪ)",
+        "😘": "(づ￣ ³￣)づ",
+        "😋": "(๑´ڡ`๑)",
+        "😆": "(*^▽^*)",
+        "😎": "( •̀ ω •́ )✧",
+        "😅": "(*^▽^*;)",
         "😭": "(╥﹏╥)",
-        "🥲": "(´；ω；`)",
-        "😿": "(T_T)",
-        "🥺": "(｡•́︿•̀｡)",
-        "🤔": "( •̀ .̫ •́ )",
-        "😴": "(-_-) zzz",
-        "😐": "( -_- )",
-        "😑": "( -_- )",
-        "😶": "( ._. )",
-        "❤": "<3",
-        "❤️": "<3",
-        "💗": "<3",
-        "💖": "<3",
-        "💘": "<3",
-        "💕": "<3",
-        "💞": "<3",
-        "✨": "(*_*)",
-        "🌟": "(*_*)",
-        "👍": "(^_^)v",
-        "👏": "(*'ω'ﾉﾉﾞ☆",
-        "🙏": "(*^_^*)",
+        "😢": "(；ω；)",
+        "🥹": "(；ω；)",
+        "😔": "(｡•́︿•̀｡)",
+        "😡": "(｀へ´*)ノ",
+        "😠": "(｀へ´*)ノ",
+        "😴": "(¦3[▓▓]",
+        "👍": "(๑•̀ㅂ•́)و✧",
+        "👏": "(*'▽'*)ﾉﾞ",
+        "🙏": "(*´人`*)",
+        "❤️": "♡",
+        "❤": "♡",
+        "💕": "♡♡",
+        "💖": "♡♡",
+        "💗": "♡♡",
+        "💙": "♡",
+        "✨": "✧",
+        "🌟": "✧",
     }
     out = text
     for emoji, face in emoji_map.items():
         out = out.replace(emoji, face)
-    return re.sub(r"[\U0001F300-\U0001FAFF\u2600-\u27BF]", "(๑•ᴗ•๑)", out)
+    return re.sub(r"[\U0001F300-\U0001FAFF\u2600-\u27BF]", "(｡･ω･｡)", out)
