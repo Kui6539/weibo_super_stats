@@ -4,7 +4,7 @@
 
 工具只建议在 `127.0.0.1` 本地使用，不建议部署到公网。
 
-当前版本：`v0.10.1`
+当前版本：`v0.10.2`
 
 ## 功能概览
 
@@ -15,6 +15,7 @@
 - 抓取帖子、补全文本、评论分析、评分排序和人工筛选。
 - 导出 Markdown、DOCX、XLSX、CSV、summary。
 - 导出适合微博发图的周报长图 JPG，并生成 `preview.html` 供人工检查排版。
+- 导出微博正文草稿 `weibo_body.txt`，包含评论排行榜和 Top 帖原帖链接。
 - 每次任务生成 `cache/`，保存中间结果。
 - 支持基于 `cache/` 离线重新生成报告，不重新请求微博。
 - 历史任务中心可扫描 `output/`、浏览历史结果、检查缓存并一键重新生成报告。
@@ -54,6 +55,12 @@ python app.py --host 127.0.0.1 --port 8765
 pip install -r requirements.txt
 ```
 
+长图导出依赖 Playwright 调用本机浏览器截图。首次安装依赖后，如本机没有可用的 Chromium/Edge 组件，可执行：
+
+```powershell
+python -m playwright install chromium
+```
+
 ## Cookie 获取
 
 推荐方式：
@@ -84,6 +91,15 @@ pip install -r requirements.txt
 8. 等待图片下载和文件导出完成。
 9. 在导出结果区查看文件清单、Markdown 预览和缓存状态。
 
+## 抓取范围规则
+
+工具只收集设置时间范围内的帖子，并按帖子 ID 去重。分页抓取会在满足以下任一条件时停止：
+
+- 连续 5 页没有发现新的时间范围内帖子。
+- 到达最大页数上限，默认最多 80 页。
+
+如果单页里重复出现已抓取过的帖子，只会计入日志统计，不会重复写入候选列表。正文中的 `#warma超话#`、`#Warma超话#`、`#warma[超话]#` 等超话标签会在报告文本中移除。
+
 ## 导出内容
 
 每次任务会在导出目录下创建一个时间戳运行目录，常见文件包括：
@@ -94,6 +110,7 @@ pip install -r requirements.txt
 - `weibo_posts.xlsx`
 - `weibo_posts.csv`
 - `weibo_summary.txt`
+- `weibo_body.txt`
 - `image_report/preview.html`
 - `image_report/page_01.jpg`
 - `image_report/metadata.json`
@@ -102,6 +119,23 @@ pip install -r requirements.txt
 - `manifest.json`
 
 导出的标题会跟随当前超话名称变化，不再写死为特定超话。
+
+## 长图与微博正文
+
+`image_report/` 面向微博发图场景：
+
+- `preview.html` 用于浏览器预览分页、字体、图片和表情渲染。
+- `page_01.jpg`、`page_02.jpg` 等为最终长图，宽度一致，高度按内容自适应。
+- 每页标题为 `Warma超话周报 第x期`，日期居中显示；期数按周六统计周期自动计算。
+- 帖子正文完整展示，图片按原比例等宽纵向排列。
+- 评论区只展示热评内容，不显示点赞量；帖子评论数、转发数等数据放在正文和热评之间。
+- 长图会尽量把微博表情标记还原为图片；如果本地未命中对应表情，会保留原始 `[表情名]` 文本，方便人工检查。
+
+`weibo_body.txt` 面向微博正文编辑：
+
+- 包含评论数量榜和评论质量榜。
+- 附上 15 个 Top 帖的 `@发帖人` 和原帖链接，链接可直接复制到微博正文中使用。
+- 不包含真实 Cookie、缓存路径或本地文件路径。
 
 ## 本地缓存与重新生成
 
