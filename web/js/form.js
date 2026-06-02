@@ -3,6 +3,7 @@ window.WeiboForm = {
     function readForm() {
       return {
         super_topic: fields.superTopic.value.trim(),
+        issue: fields.issue.value.trim(),
         cookie: fields.cookie.value.trim(),
         window_start: fields.windowStart.value,
         window_end: fields.windowEnd.value,
@@ -22,6 +23,7 @@ window.WeiboForm = {
     function configPayload() {
       return {
         super_topic: fields.superTopic.value.trim(),
+        issue: fields.issue.value.trim(),
         cookie: fields.cookie.value.trim(),
         max_pages: fields.maxPages.value,
         topic_comment_factor: fields.topicCommentFactor.value,
@@ -45,6 +47,7 @@ window.WeiboForm = {
 
     function applyDefaults(defaults) {
       fields.superTopic.value = defaults.super_topic || "";
+      fields.issue.value = defaults.issue || "";
       fields.cookie.value = defaults.cookie || "";
       fields.windowStart.value = defaults.window_start || "";
       fields.windowEnd.value = defaults.window_end || "";

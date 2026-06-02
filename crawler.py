@@ -299,7 +299,7 @@ class WeiboSuperTopicCrawler:
     def _apply_chaohua_topic_name(self, page_data: dict[str, Any], super_topic: str) -> None:
         if self.topic_name:
             return
-        self.topic_name = _chaohua_extract_topic_name(page_data)
+        self.topic_name = normalize_super_topic_name(_chaohua_extract_topic_name(page_data))
         self.report_title = build_report_title(self.topic_name, super_topic)
         if self.topic_name:
             self._log(f"已识别超话名称：{self.topic_name}")

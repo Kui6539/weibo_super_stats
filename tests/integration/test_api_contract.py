@@ -10,6 +10,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 import core.config as config_module
+import core.history as history_module
 from server.handlers import AppRequestHandler
 from tests.helpers import assert_json_ok
 
@@ -18,8 +19,10 @@ class ApiContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls._old_config_path = config_module.CONFIG_PATH
+        cls._old_history_path = history_module.HISTORY_PATH
         cls._temp_config_dir = tempfile.TemporaryDirectory()
         config_module.CONFIG_PATH = Path(cls._temp_config_dir.name) / "weibo_stats_config.json"
+        history_module.HISTORY_PATH = Path(cls._temp_config_dir.name) / "weibo_stats_history.json"
         cls.server = ThreadingHTTPServer(("127.0.0.1", 0), AppRequestHandler)
         cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
         cls.thread.start()
@@ -31,6 +34,7 @@ class ApiContractTests(unittest.TestCase):
         cls.server.server_close()
         cls.thread.join(timeout=3)
         config_module.CONFIG_PATH = cls._old_config_path
+        history_module.HISTORY_PATH = cls._old_history_path
         cls._temp_config_dir.cleanup()
 
     def test_defaults_status_and_cookie_contracts(self) -> None:
@@ -64,6 +68,39 @@ class ApiContractTests(unittest.TestCase):
         assert_json_ok(self, response)
         self.assertFalse(response["data"]["can_start"])
         self.assertTrue(response["data"]["checks"])
+
+    def test_preflight_blocks_duplicate_topic_issue(self) -> None:
+        history_module.save_history({
+            "items": [
+                {
+                    "run_id": "20260512_010101",
+                    "super_topic": "100808abc",
+                    "super_topic_name": "原神",
+                    "super_topic_id": "100808abc",
+                    "report_title": "原神超话周报",
+                    "issue": "6",
+                    "status": "completed",
+                    "report_dir": "output/20260512_010101",
+                }
+            ]
+        })
+        payload = {
+            "super_topic": "https://weibo.com/p/100808abc/super_index",
+            "issue": "第6期",
+            "cookie": "",
+            "window_start": "2026-05-24T04:00",
+            "window_end": "2026-05-30T04:00",
+            "max_pages": "80",
+            "pause_seconds": "1.0",
+            "topic_comment_factor": "1.0",
+            "output_dir": str(Path(self._temp_config_dir.name) / "output"),
+        }
+        response = self.post_json("/api/preflight", payload)
+        assert_json_ok(self, response)
+        self.assertFalse(response["data"]["can_start"])
+        duplicate_check = next(item for item in response["data"]["checks"] if item["id"] == "duplicate_issue")
+        self.assertEqual(duplicate_check["status"], "error")
+        self.assertIn("原神超话周报 第6期", duplicate_check["message"])
 
     def test_cache_status_and_reexport_error_contracts(self) -> None:
         cache_missing = self.post_json("/api/cache-status", {"run_dir": "output/not_exists_for_api_contract"})

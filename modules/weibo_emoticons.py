@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -13,6 +14,8 @@ import requests
 
 WEIBO_EMOTICON_INDEX_URL = "https://h5.sinaimg.cn/m/emoticon/all.json"
 WEIBO_EMOTICON_API_URL = "https://api.weibo.com/2/emotions.json?source=3818214747&type=face&language=cnname"
+WEIBO_EMOTICON_ASSET_DIR_ENV = "WEIBO_STATS_EMOTICON_DIR"
+DEFAULT_WEIBO_EMOTICON_ASSET_DIR = Path(__file__).resolve().parents[1] / "assets" / "weibo_emoticons"
 EMOTICON_TOKEN_RE = re.compile(r"\[([^\[\]\r\n]{1,24})\]")
 
 
@@ -26,25 +29,39 @@ def extract_weibo_emoticon_names(*texts: str) -> set[str]:
     return names
 
 
+def default_weibo_emoticon_asset_dir() -> Path:
+    raw = os.environ.get(WEIBO_EMOTICON_ASSET_DIR_ENV, "").strip()
+    return Path(raw).expanduser() if raw else DEFAULT_WEIBO_EMOTICON_ASSET_DIR
+
+
 def ensure_weibo_emoticon_assets(
-    target_dir: Path,
+    target_dir: Path | None = None,
     *,
     names: set[str] | None = None,
-    download_all: bool = True,
+    download_all: bool = False,
     index_url: str = WEIBO_EMOTICON_INDEX_URL,
+    output_dir: Path | None = None,
+    allow_download: bool = True,
 ) -> tuple[dict[str, str], list[str]]:
-    target_dir.mkdir(parents=True, exist_ok=True)
+    asset_dir = Path(target_dir) if target_dir is not None else default_weibo_emoticon_asset_dir()
+    asset_dir.mkdir(parents=True, exist_ok=True)
+    reference_base = Path(output_dir) if output_dir is not None else asset_dir.parent
     warnings: list[str] = []
-    index, index_warnings = _load_or_fetch_index(target_dir / "index.json", index_url)
+    index_path = asset_dir / "index.json"
+    index, index_warnings = _load_or_fetch_index(index_path, index_url, allow_download=allow_download)
     warnings.extend(index_warnings)
     missing_names = {name for name in (names or set()) if name not in index}
-    if missing_names:
+    if missing_names and allow_download:
         api_index, api_warnings = _fetch_api_index()
         warnings.extend(api_warnings)
         if api_index:
             index.update(api_index)
-            _write_index(target_dir / "index.json", index)
+            _write_index(index_path, index)
+    elif missing_names and index:
+        warnings.append(f"有 {len(missing_names)} 个微博表情未在本地索引中命中，已保留原始文本。")
     if not index:
+        if names and not allow_download:
+            warnings.append("本地微博表情索引不存在，已跳过联网补齐并保留原始表情文本。")
         return {}, warnings
 
     requested = set(index) if download_all else {name for name in (names or set()) if name in index}
@@ -61,14 +78,17 @@ def ensure_weibo_emoticon_assets(
         if not source:
             continue
         filename = _asset_filename(name, item, source)
-        path = target_dir / filename
-        rel_path = f"{target_dir.name}/{filename}"
+        path = asset_dir / filename
+        rel_path = _asset_reference(path, reference_base)
         if path.exists() and path.stat().st_size > 0:
             assets[name] = rel_path
         else:
             pending.append((name, source, path, rel_path))
 
     if pending:
+        if not allow_download:
+            warnings.append(f"有 {len(pending)} 个微博表情图片未缓存，已保留原始文本。")
+            return assets, warnings
         with ThreadPoolExecutor(max_workers=min(8, len(pending)), thread_name_prefix="weibo-emoticon") as executor:
             futures = {
                 executor.submit(_download_asset, name, source, path): (name, path, rel_path)
@@ -84,7 +104,19 @@ def ensure_weibo_emoticon_assets(
     return assets, warnings
 
 
-def _load_or_fetch_index(index_path: Path, index_url: str) -> tuple[dict[str, dict[str, Any]], list[str]]:
+def _asset_reference(path: Path, output_dir: Path) -> str:
+    try:
+        return Path(os.path.relpath(path.resolve(), output_dir.resolve())).as_posix()
+    except Exception:
+        return path.resolve().as_uri()
+
+
+def _load_or_fetch_index(
+    index_path: Path,
+    index_url: str,
+    *,
+    allow_download: bool = True,
+) -> tuple[dict[str, dict[str, Any]], list[str]]:
     warnings: list[str] = []
     if index_path.exists():
         try:
@@ -93,6 +125,9 @@ def _load_or_fetch_index(index_path: Path, index_url: str) -> tuple[dict[str, di
                 return {str(k): v for k, v in cached.items() if isinstance(v, dict)}, warnings
         except Exception:
             pass
+
+    if not allow_download:
+        return {}, warnings
 
     index: dict[str, dict[str, Any]] = {}
     try:

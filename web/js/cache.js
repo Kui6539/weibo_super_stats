@@ -10,6 +10,7 @@ window.WeiboCache = {
     showToast,
     appendClientLog,
     previewController,
+    imagePreviewController,
   }) {
     let autoPreviewResultKey = "";
     let lastCacheStatusKey = "";
@@ -30,6 +31,7 @@ window.WeiboCache = {
         lastCacheStatusKey = "";
         lastCacheCanReexport = false;
         previewController.hide();
+        imagePreviewController?.reset();
         autoPreviewResultKey = "";
         return;
       }
@@ -40,6 +42,11 @@ window.WeiboCache = {
       controls.openResultDir.classList.remove("hidden");
       controls.openResultDir.disabled = false;
       renderResultList(result);
+      imagePreviewController?.setPages({
+        pages: result.image_report_pages || result.manifest?.files?.image_report_pages || [],
+        mdPath: result.md || result.manifest?.files?.markdown || "",
+        previewHtml: result.image_report_preview || result.manifest?.files?.image_report_preview || "",
+      });
       if (result.run_dir) currentRunDir = result.run_dir;
       if (ui.reexportRunDir && result.run_dir && ui.reexportRunDir.value !== result.run_dir) {
         ui.reexportRunDir.value = result.run_dir;
@@ -50,7 +57,9 @@ window.WeiboCache = {
 
       if (result.md && result.md !== autoPreviewResultKey) {
         autoPreviewResultKey = result.md;
-        previewController.load({ auto: true, mdPath: result.md });
+        previewController.load({ auto: true, mdPath: result.md }).then(() => {
+          window.dispatchEvent(new CustomEvent("weibo:preview-mode-change", { detail: { mode: "md" } }));
+        });
       }
     }
 
@@ -73,7 +82,7 @@ window.WeiboCache = {
         resultFileRow("CSV 文件", normalizeFileItem(files.csv, "CSV", result.csv)),
         resultFileRow("summary txt 文件", normalizeFileItem(files.summary, "summary txt", result.summary)),
         resultFileRow("微博正文 txt", normalizeFileItem(files.weibo_body, "微博正文 txt", result.weibo_body)),
-        resultFileRow("长图预览 HTML", normalizeFileItem(files.image_report_preview, "长图预览 HTML", result.image_report_preview)),
+        resultFileRow("长图预览 HTML", normalizeFileItem(files.image_report_preview, "长图预览 HTML", result.image_report_preview, "preview_image_report")),
         ...arrayFileRows("长图 JPG", files.image_report_pages || result.image_report_pages),
         resultFileRow("长图 metadata", normalizeFileItem(files.image_report_metadata, "长图 metadata", result.image_report_metadata)),
         resultFileRow("images 图片目录", normalizeFileItem(files.images || files.images_dir, "images 图片目录", result.image_dir, "open_result_dir")),
@@ -114,7 +123,9 @@ window.WeiboCache = {
       const previewButton =
         action === "preview_markdown"
           ? `<button type="button" class="secondary small-button" data-preview-md="1">预览 Markdown</button>`
-          : "";
+          : action === "preview_image_report"
+            ? `<button type="button" class="secondary small-button" data-preview-image-report="1">预览长图</button>`
+            : "";
       const openButton =
         action === "open_result_dir"
           ? `<button type="button" class="secondary small-button" data-open-result="1">打开导出目录</button>`
@@ -155,11 +166,18 @@ window.WeiboCache = {
         return;
       }
       if (event.target.closest("[data-preview-md]")) {
-        previewController.load({ mdPath: autoPreviewResultKey });
+        previewController.load({ mdPath: autoPreviewResultKey }).then(() => {
+          window.dispatchEvent(new CustomEvent("weibo:preview-mode-change", { detail: { mode: "md" } }));
+        });
         return;
       }
       if (event.target.closest("[data-open-result]")) {
         openResultDir();
+        return;
+      }
+      if (event.target.closest("[data-preview-image-report]")) {
+        imagePreviewController?.show();
+        window.dispatchEvent(new CustomEvent("weibo:preview-mode-change", { detail: { mode: "pic" } }));
       }
     }
 

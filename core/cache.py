@@ -8,6 +8,10 @@ from typing import Any
 
 from core.errors import CacheError
 
+ROOT_DIR = Path(__file__).resolve().parents[1]
+CACHE_ROOT_ENV = "WEIBO_STATS_CACHE_ROOT"
+LEGACY_CACHE_DIR_NAME = "cache"
+
 SENSITIVE_KEYS = {
     "cookie",
     "cookies",
@@ -56,10 +60,25 @@ def _is_sensitive_key(key: Any) -> bool:
 
 
 class CacheStore:
-    def __init__(self, run_dir: Path):
+    def __init__(self, run_dir: Path, cache_root: Path | None = None):
         self.run_dir = run_dir.resolve()
-        self.cache_dir = self.run_dir / "cache"
+        self.legacy_cache_dir = self.run_dir / LEGACY_CACHE_DIR_NAME
+        root = cache_root.resolve() if cache_root is not None else default_cache_root()
+        self.cache_root = root
+        self.project_cache_dir = self.cache_root / self.run_dir.name
+        self.cache_dir = self._resolve_cache_dir()
         self.comments_dir = self.cache_dir / "comments"
+        self.cache_location = "run_dir_legacy" if self.cache_dir == self.legacy_cache_dir else "project_root"
+
+    def _resolve_cache_dir(self) -> Path:
+        manifest_cache_dir = self._cache_dir_from_manifest()
+        if manifest_cache_dir and manifest_cache_dir.exists():
+            return manifest_cache_dir
+        if self.legacy_cache_dir.exists():
+            return self.legacy_cache_dir
+        if self.project_cache_dir.exists():
+            return self.project_cache_dir
+        return self.project_cache_dir
 
     def init(self) -> None:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -123,6 +142,10 @@ class CacheStore:
                 manifest = None
         return {
             "run_dir": str(self.run_dir),
+            "cache_dir": str(self.cache_dir),
+            "cache_root": str(self.cache_root),
+            "cache_location": self.cache_location,
+            "legacy_cache_dir": str(self.legacy_cache_dir),
             "has_cache": has_cache,
             "can_reexport": can_reexport,
             "missing": missing,
@@ -130,6 +153,67 @@ class CacheStore:
             "comments_count": comments_count,
             "manifest": manifest,
         }
+
+    def manifest_paths(self) -> dict[str, str]:
+        base = self._display_path(self.cache_dir)
+        return {
+            "cache_dir": base,
+            "location": self.cache_location,
+            "run_config": f"{base}/run_config.json",
+            "posts_raw": f"{base}/posts_raw.json",
+            "posts_hydrated": f"{base}/posts_hydrated.json",
+            "posts_scored": f"{base}/posts_scored.json",
+            "candidates": f"{base}/candidates.json",
+            "selected_posts": f"{base}/selected_posts.json",
+            "community_stats": f"{base}/community_stats.json",
+            "images_manifest": f"{base}/images_manifest.json",
+            "comments_dir": f"{base}/comments",
+        }
+
+    def _cache_dir_from_manifest(self) -> Path | None:
+        manifest_path = self.run_dir / "manifest.json"
+        if not manifest_path.exists():
+            return None
+        try:
+            manifest = _read_json_file(manifest_path)
+        except CacheError:
+            return None
+        cache = manifest.get("cache") if isinstance(manifest, dict) else None
+        if not isinstance(cache, dict):
+            return None
+        raw = str(cache.get("cache_dir") or "").strip()
+        if not raw:
+            return None
+        path = Path(raw)
+        if path.is_absolute():
+            return path.resolve()
+        location = str(cache.get("location") or "").strip()
+        if location == "project_root":
+            return (ROOT_DIR / path).resolve()
+        if location == "run_dir_legacy":
+            return (self.run_dir / path).resolve()
+        if raw == LEGACY_CACHE_DIR_NAME:
+            return self.legacy_cache_dir
+        if raw.startswith(f"{LEGACY_CACHE_DIR_NAME}/") and self.run_dir.name in path.parts:
+            return (ROOT_DIR / path).resolve()
+        return (self.run_dir / path).resolve()
+
+    def _display_path(self, path: Path) -> str:
+        resolved = path.resolve()
+        for base in (self.run_dir.resolve(), ROOT_DIR.resolve()):
+            try:
+                return str(resolved.relative_to(base)).replace("\\", "/")
+            except ValueError:
+                continue
+        return str(resolved).replace("\\", "/")
+
+
+def default_cache_root() -> Path:
+    raw = str(os.environ.get(CACHE_ROOT_ENV) or "").strip()
+    if raw:
+        path = Path(raw).expanduser()
+        return (ROOT_DIR / path).resolve() if not path.is_absolute() else path.resolve()
+    return ROOT_DIR / "cache"
 
 
 def read_manifest(run_dir: Path, default: Any = None) -> Any:

@@ -37,6 +37,8 @@ class HistoryScanTests(unittest.TestCase):
         self.assertEqual(result["scanned"], 3)
         self.assertEqual(len(result["items"]), 2)
         self.assertEqual(result["items"][0]["run_id"], "20260512_010101")
+        self.assertEqual(result["items"][0]["issue"], "6")
+        self.assertEqual(result["items"][0]["title_with_issue"], "原神超话周报 第6期")
         self.assertTrue(result["warnings"])
 
     def _write_manifest(self, run_dir: Path, created_at: str) -> None:
@@ -51,6 +53,11 @@ class HistoryScanTests(unittest.TestCase):
                     "created_at": created_at,
                     "updated_at": created_at,
                     "status": "completed",
+                    "super_topic": "100808abc",
+                    "super_topic_name": "原神",
+                    "super_topic_id": "100808abc",
+                    "report_title": "原神超话周报",
+                    "issue": "6",
                     "files": {},
                 },
                 ensure_ascii=False,

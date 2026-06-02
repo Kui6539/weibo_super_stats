@@ -4,7 +4,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from core.cache import sanitize_for_cache, write_manifest_json
+from core.cache import CacheStore, sanitize_for_cache, write_manifest_json
 from export.context import ExportContext
 from modules.weibo_url import parse_super_topic_id
 
@@ -44,6 +44,7 @@ def build_manifest(
         "super_topic": super_topic,
         "super_topic_name": str(config.get("super_topic_name") or ""),
         "report_title": str(config.get("report_title") or ""),
+        "issue": str(config.get("issue") or config.get("week_issue") or ""),
         "super_topic_id": str(config.get("super_topic_id") or parse_super_topic_id(super_topic) or ""),
         "window_start": str(config.get("window_start") or ""),
         "window_end": str(config.get("window_end") or ""),
@@ -66,17 +67,7 @@ def build_manifest(
             "image_report_pages": [_rel(run_dir, path) for path in files.get("image_report_pages", []) or []],
             "image_report_metadata": _rel(run_dir, files.get("image_report_metadata")),
         },
-        "cache": {
-            "run_config": "cache/run_config.json",
-            "posts_raw": "cache/posts_raw.json",
-            "posts_hydrated": "cache/posts_hydrated.json",
-            "posts_scored": "cache/posts_scored.json",
-            "candidates": "cache/candidates.json",
-            "selected_posts": "cache/selected_posts.json",
-            "community_stats": "cache/community_stats.json",
-            "images_manifest": "cache/images_manifest.json",
-            "comments_dir": "cache/comments",
-        },
+        "cache": CacheStore(run_dir).manifest_paths(),
         "warnings": merged_warnings,
         "failed_image_count": failed_image_count,
         "failed_images": failed_image_rows,

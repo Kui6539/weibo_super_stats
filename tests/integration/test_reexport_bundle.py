@@ -36,8 +36,8 @@ class ReexportBundleTests(unittest.TestCase):
 
     def test_missing_selected_posts_has_friendly_error(self) -> None:
         with make_temp_run_dir() as run_dir:
-            write_cache_fixture(run_dir)
-            (run_dir / "cache" / "selected_posts.json").unlink()
+            store = write_cache_fixture(run_dir)
+            (store.cache_dir / "selected_posts.json").unlink()
             with self.assertRaises(ReexportCacheMissingError) as ctx:
                 reexport_from_cache(run_dir)
             self.assertEqual(ctx.exception.code, "REEXPORT_CACHE_MISSING")
@@ -45,9 +45,9 @@ class ReexportBundleTests(unittest.TestCase):
 
     def test_missing_posts_cache_has_friendly_error(self) -> None:
         with make_temp_run_dir() as run_dir:
-            write_cache_fixture(run_dir)
-            (run_dir / "cache" / "posts_scored.json").unlink()
-            (run_dir / "cache" / "posts_hydrated.json").unlink()
+            store = write_cache_fixture(run_dir)
+            (store.cache_dir / "posts_scored.json").unlink()
+            (store.cache_dir / "posts_hydrated.json").unlink()
             with self.assertRaises(ReexportCacheMissingError) as ctx:
                 reexport_from_cache(run_dir)
             self.assertEqual(ctx.exception.code, "REEXPORT_CACHE_MISSING")

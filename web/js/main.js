@@ -2,6 +2,7 @@ const $ = window.WeiboUtils?.$ || ((id) => document.getElementById(id));
 
 const fields = {
   superTopic: $("superTopic"),
+  issue: $("issue"),
   cookie: $("cookie"),
   windowStart: $("windowStart"),
   windowEnd: $("windowEnd"),
@@ -38,6 +39,10 @@ const controls = {
   preview: $("previewBtn"),
   refreshPreview: $("refreshPreviewBtn"),
   copyMarkdown: $("copyMarkdownBtn"),
+  imagePreviewPrev: $("imagePreviewPrevBtn"),
+  imagePreviewNext: $("imagePreviewNextBtn"),
+  refreshImagePreview: $("refreshImagePreviewBtn"),
+  openImagePreview: $("openImagePreviewBtn"),
   openResultDir: $("openResultDirBtn"),
   logSearch: $("logSearch"),
   logLevelFilter: $("logLevelFilter"),
@@ -100,10 +105,19 @@ const ui = {
   previewPanel: $("previewPanel"),
   previewContent: $("previewContent"),
   previewPath: $("previewPath"),
+  previewModeBadge: $("previewModeBadge"),
+  imagePreviewPanel: $("imagePreviewPanel"),
+  imagePreviewPath: $("imagePreviewPath"),
+  imagePreviewCounter: $("imagePreviewCounter"),
+  imagePreviewViewport: $("imagePreviewViewport"),
+  imagePreviewThumbs: $("imagePreviewThumbs"),
   cookieSummary: $("cookieSummary"),
   cookieStateBadge: $("cookieStateBadge"),
   cookieEditor: $("cookieEditor"),
   advancedFields: $("advancedFields"),
+  topicMeta: $("topicMeta"),
+  topicNameText: $("topicNameText"),
+  topicPreviewMessage: $("topicPreviewMessage"),
   preflightPanel: $("preflightPanel"),
   preflightSummary: $("preflightSummary"),
   preflightList: $("preflightList"),
@@ -187,6 +201,13 @@ const formController = window.WeiboForm.createController({
   getTheme: themeController.current,
 });
 
+const topicPreviewController = window.WeiboTopicPreview.createController({
+  fields,
+  ui,
+  api,
+  readForm,
+});
+
 const candidatesController = window.WeiboCandidates.createController({
   ui,
   controls,
@@ -231,6 +252,20 @@ const previewController = window.WeiboPreview.createController({
   copyText,
 });
 
+const imagePreviewController = window.WeiboImagePreview.createController({
+  ui,
+  controls,
+  api,
+  setBusy,
+  escapeHtml,
+  escapeAttr,
+  appendClientLog,
+  showToast,
+});
+
+previewController.setOnBeforeShow(() => imagePreviewController.hide());
+imagePreviewController.setOnBeforeShow(() => previewController.hide());
+
 const cacheController = window.WeiboCache.createController({
   ui,
   controls,
@@ -242,6 +277,7 @@ const cacheController = window.WeiboCache.createController({
   showToast,
   appendClientLog,
   previewController,
+  imagePreviewController,
 });
 
 const presetController = window.WeiboPresets.createController({
@@ -252,6 +288,10 @@ const presetController = window.WeiboPresets.createController({
   showToast,
   formController,
   scheduleConfigSave,
+  onPresetApplied: () => {
+    topicPreviewController.resetIssueAutoState();
+    topicPreviewController.scheduleRefresh(0);
+  },
 });
 
 const historyController = window.WeiboHistory.createController({
@@ -337,6 +377,7 @@ taskController = window.WeiboTask.createController({
   candidatesController,
   cacheController,
   presetController,
+  topicPreviewController,
   historyController,
   outputCleanupController,
   previewController,
@@ -392,9 +433,11 @@ window.WeiboEvents.bind({
   candidatesController,
   cacheController,
   presetController,
+  topicPreviewController,
   historyController,
   outputCleanupController,
   previewController,
+  imagePreviewController,
   logsController,
   preflightController,
   helpController,
@@ -409,6 +452,8 @@ configController
   .then(async () => {
     preflightController.restoreCache();
     await presetController.load();
+    topicPreviewController.resetIssueAutoState();
+    topicPreviewController.scheduleRefresh(0);
     await historyController.load();
     await outputCleanupController.loadSummary();
     await taskController.refreshStatus();

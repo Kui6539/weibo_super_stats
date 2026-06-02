@@ -24,7 +24,7 @@ class ImageReportExportTests(unittest.TestCase):
             self.assertEqual(result.pages, [])
             html = result.preview.read_text(encoding="utf-8")
             self.assertIn("report-page", html)
-            self.assertIn("Warma超话周报 第3期", html)
+            self.assertIn("测试超话周报 第3期", html)
             self.assertIn("热评", html)
             self.assertNotIn("打开原帖", html)
 

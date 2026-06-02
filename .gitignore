@@ -9,6 +9,7 @@ __pycache__/
 *.obj
 
 output/
+cache/
 .edge_cdp_profile/
 .chrome_cdp_profile/
 dist/
@@ -22,3 +23,5 @@ weibo_stats_history.broken.json
 
 .DS_Store
 Thumbs.db
+
+.playwright-mcp/

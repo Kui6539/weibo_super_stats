@@ -26,3 +26,4 @@ class CrawlConfig:
     window_start: datetime | None = None
     window_end: datetime | None = None
     carryover_hours: int = 0
+    issue: str = ""

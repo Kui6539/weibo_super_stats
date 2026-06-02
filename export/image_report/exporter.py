@@ -28,9 +28,10 @@ def export_image_report(
         used_names = _collect_emoticon_names(data)
         if used_names:
             data.emoticons, emoticon_warnings = ensure_weibo_emoticon_assets(
-                target_dir / "emoticons",
                 names=used_names,
                 download_all=cfg.download_all_emoticons,
+                output_dir=target_dir,
+                allow_download=not getattr(ctx, "reexport", False),
             )
             warnings.extend(emoticon_warnings)
     pages = paginate_posts(data.posts, cfg)

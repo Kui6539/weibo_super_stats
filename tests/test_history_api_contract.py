@@ -53,6 +53,8 @@ class HistoryApiContractTests(unittest.TestCase):
         scanned = self.post_json("/api/history/scan", {"output_dir": str(Path(self._temp_output_dir.name).relative_to(Path.cwd()))})
         assert_json_ok(self, scanned)
         self.assertEqual(scanned["data"]["scanned"], 1)
+        self.assertEqual(scanned["data"]["items"][0]["title_with_issue"], "原神超话周报 第6期")
+        self.assertEqual(scanned["data"]["items"][0]["issue"], "6")
         run_id = scanned["data"]["items"][0]["run_id"]
 
         status = self.post_json("/api/history/cache-status", {"run_id": run_id})
@@ -96,6 +98,10 @@ class HistoryApiContractTests(unittest.TestCase):
             "updated_at": "2026-05-12 02:02:02",
             "status": "completed",
             "super_topic": "100808abc",
+            "super_topic_name": "原神",
+            "super_topic_id": "100808abc",
+            "report_title": "原神超话周报",
+            "issue": "6",
             "selected_count": 3,
             "total_posts": 3,
             "files": {"markdown": "weekly_report.md", "csv": "weibo_posts.csv", "summary": "weibo_summary.txt"},

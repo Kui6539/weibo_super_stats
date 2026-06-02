@@ -44,7 +44,7 @@ from export.summary_exporter import analyze_active_period, build_summary
 from export.weibo_body_exporter import export_weibo_body
 from modules.comments.ranking import build_comment_leaderboards
 from modules.text_cleaning import remove_weibo_private_chars
-from modules.topic import build_report_title
+from modules.topic import build_report_title, format_report_title_with_issue
 
 ACTIVE_STATUSES = {"running", "awaiting_selection", "exporting"}
 _console_lock = threading.Lock()
@@ -228,7 +228,7 @@ class CrawlJob:
         self.selected_indexes: list[int] | None = None
         self.cancel_requested = threading.Event()
         self.super_topic_name = ""
-        self.report_title = build_report_title("", self.cfg.super_topic)
+        self.report_title = format_report_title_with_issue(build_report_title("", self.cfg.super_topic), self.cfg.issue)
 
         self._candidate_posts: list[dict] = []
         self._lock = threading.RLock()
@@ -663,7 +663,10 @@ class CrawlJob:
             )
             posts_all = crawler.crawl(self.cfg)
             self.super_topic_name = crawler.topic_name
-            self.report_title = crawler.report_title or build_report_title(self.super_topic_name, self.cfg.super_topic)
+            self.report_title = format_report_title_with_issue(
+                crawler.report_title or build_report_title(self.super_topic_name, self.cfg.super_topic),
+                self.cfg.issue,
+            )
             self._write_cache_stage(cache_store, "run_config", self._run_config_payload(run_dir), critical=True)
             self.check_cancelled()
             self._write_cache_stage(cache_store, "posts_scored", posts_all)
@@ -942,6 +945,7 @@ class CrawlJob:
                 "super_topic": self.cfg.super_topic,
                 "super_topic_name": self.super_topic_name,
                 "report_title": self.report_title,
+                "issue": self.cfg.issue,
                 "super_topic_id": parse_super_topic_id(self.cfg.super_topic) or "",
                 "max_pages": self.cfg.max_pages,
                 "pause_seconds": self.cfg.pause_seconds,

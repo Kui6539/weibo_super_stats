@@ -12,6 +12,11 @@ window.WeiboPreview = {
     let currentMarkdown = "";
     let markdownRenderer = null;
     let currentMdPath = "";
+    let onBeforeShow = null;
+
+    function setOnBeforeShow(callback) {
+      onBeforeShow = typeof callback === "function" ? callback : null;
+    }
 
     async function load(options = {}) {
       const isAuto = Boolean(options.auto);
@@ -83,15 +88,16 @@ window.WeiboPreview = {
     }
 
     function show() {
+      if (typeof onBeforeShow === "function") {
+        onBeforeShow();
+      }
       ui.layout.classList.add("has-preview");
       ui.previewPanel.setAttribute("aria-hidden", "false");
-      controls.preview.textContent = "关闭预览";
     }
 
     function hide() {
       ui.layout.classList.remove("has-preview");
       ui.previewPanel.setAttribute("aria-hidden", "true");
-      controls.preview.textContent = "周报编辑预览";
     }
 
     async function copy() {
@@ -193,6 +199,7 @@ window.WeiboPreview = {
       copy,
       renderMarkdown,
       bindImages,
+      setOnBeforeShow,
     };
   },
 };

@@ -21,6 +21,7 @@ WebUI -> HTTP API -> CrawlJob -> crawler -> cache -> export -> manifest
 
 - `/api/defaults`
 - `/api/preflight`
+- `/api/topic-preview`
 - `/api/check-cookie`
 - `/api/start`
 - `/api/status`
@@ -49,7 +50,7 @@ WebUI -> HTTP API -> CrawlJob -> crawler -> cache -> export -> manifest
 - `core/config.py`：配置读写、迁移、预检查参数构造。
 - `core/job.py`：任务状态、结构化事件、人工筛选等待、取消信号。
 - `core/events.py`：`JobEvent`、阶段标签、事件脱敏。
-- `core/cache.py`：`cache/` 读写、缓存状态、manifest 读写辅助。
+- `core/cache.py`：项目根 `cache/<run_id>/` 读写、旧版运行目录 cache 兼容、缓存状态、manifest 读写辅助。
 - `core/paths.py`：路径安全、导出目录处理。
 - `core/errors.py`：统一错误类型和 JSON 错误结构。
 - `core/crawl_types.py`：`CrawlConfig`、`CrawlError`。
@@ -70,6 +71,7 @@ WebUI -> HTTP API -> CrawlJob -> crawler -> cache -> export -> manifest
 - `modules/time_utils.py`：时间解析。
 - `modules/weibo_url.py`：超话 ID、微博 URL、图片 URL。
 - `modules/topic.py`：超话名解析和报告标题。
+- `modules/weibo_emoticons.py`：微博表情 token 提取、共享表情资源准备。
 - `modules/weibo_html_parser.py`：外层原帖 HTML 解析。
 - `modules/comments/`：评论解析、分析、榜单。
 - `modules/images/`：图片收集、路径、下载、manifest、URL 提取。
@@ -89,7 +91,7 @@ WebUI -> HTTP API -> CrawlJob -> crawler -> cache -> export -> manifest
 - `export/report_helpers.py`
 - `export/image_report/`：长图数据适配、分页、HTML 预览和 Playwright 截图导出。
 
-导出器只依赖本地数据和本地文件，不应访问微博网络。
+导出器只依赖本地数据和本地文件，不应重新抓取微博帖子、评论或图片。长图导出可以补齐缺失的工具级微博表情资源；离线重新生成报告时禁止联网补齐，未命中的表情保留原始 `[表情名]`。
 
 ## web/
 
@@ -128,19 +130,30 @@ WebUI 使用静态 HTML/CSS/JS：
 
 ## cache 与 manifest
 
-每次任务运行目录包含：
+每次任务会在项目根目录写入独立缓存，运行目录只保留最终报告和 `manifest.json`：
 
 ```text
-cache/run_config.json
-cache/posts_raw.json
-cache/posts_hydrated.json
-cache/posts_scored.json
-cache/candidates.json
-cache/selected_posts.json
-cache/community_stats.json
-cache/images_manifest.json
-cache/comments/
+cache/<run_id>/run_config.json
+cache/<run_id>/posts_raw.json
+cache/<run_id>/posts_hydrated.json
+cache/<run_id>/posts_scored.json
+cache/<run_id>/candidates.json
+cache/<run_id>/selected_posts.json
+cache/<run_id>/community_stats.json
+cache/<run_id>/images_manifest.json
+cache/<run_id>/comments/
 manifest.json
 ```
 
-`cache/` 和 `manifest.json` 不应保存登录凭据或会话字段。
+旧版本保存在 `output/<run_id>/cache/` 的缓存仍会被 `CacheStore` 识别。`cache/` 和 `manifest.json` 不应保存登录凭据或会话字段。
+
+微博表情资源是工具级共享资源，不跟随单次运行复制：
+
+```text
+assets/weibo_emoticons/index.json
+assets/weibo_emoticons/*.png
+assets/weibo_emoticons/*.gif
+assets/weibo_emoticons/*.webp
+```
+
+长图导出默认只补齐本次周报实际出现的表情；离线重新生成报告时只读取已有资源，不联网下载。

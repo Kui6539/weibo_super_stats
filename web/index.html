@@ -85,7 +85,10 @@
           <span class="theme-icon theme-moon" aria-hidden="true">☾</span>
         </button>
         <button id="helpBtn" type="button" class="secondary">使用说明</button>
-        <button id="previewBtn" type="button" class="secondary hidden" disabled>周报编辑预览</button>
+        <button id="previewBtn" type="button" class="secondary hidden preview-toggle-button" disabled>
+          <span class="preview-toggle-text">预览</span>
+          <span id="previewModeBadge" class="preview-mode-badge hidden" aria-hidden="true"></span>
+        </button>
         <div class="status-pill" id="statusPill">未开始</div>
       </div>
     </header>
@@ -120,6 +123,24 @@
             <span>超话链接或 ID</span>
             <input id="superTopic" type="text" autocomplete="off" />
           </label>
+          <div id="topicMeta" class="topic-meta hidden" aria-live="polite">
+            <div class="topic-meta-main">
+              <span class="topic-meta-label">当前超话</span>
+              <strong id="topicNameText">等待识别</strong>
+            </div>
+            <label class="topic-issue-field" for="issue">
+              <span class="topic-issue-label">周报期数</span>
+              <span class="topic-issue-input">
+                <span>第</span>
+                <input id="issue" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" />
+                <span>期</span>
+              </span>
+            </label>
+            <div class="topic-title-preview">
+              <span class="topic-meta-label">导出标题</span>
+              <strong id="topicPreviewMessage" class="topic-preview-message">等待识别</strong>
+            </div>
+          </div>
 
           <section id="cookiePanel" class="cookie-panel" aria-label="微博 Cookie">
             <div class="cookie-summary">
@@ -370,6 +391,32 @@
         </div>
         <article id="previewContent" class="markdown-body"></article>
       </section>
+
+      <section id="imagePreviewPanel" class="side-panel image-preview-panel" aria-label="长图预览" aria-hidden="true">
+        <div class="side-toolbar">
+          <div>
+            <h2>长图预览</h2>
+            <p id="imagePreviewPath" class="muted"></p>
+          </div>
+          <div class="preview-actions">
+            <span id="imagePreviewCounter" class="muted image-preview-counter">0 / 0</span>
+            <button id="refreshImagePreviewBtn" type="button" class="secondary">刷新预览</button>
+            <button id="openImagePreviewBtn" type="button" class="secondary">在新窗口打开</button>
+          </div>
+        </div>
+        <div class="image-preview-stage">
+          <button id="imagePreviewPrevBtn" type="button" class="image-preview-arrow image-preview-prev" aria-label="上一张" disabled>
+            <span aria-hidden="true">‹</span>
+          </button>
+          <div id="imagePreviewViewport" class="image-preview-viewport">
+            <div class="empty-state">暂无可预览的长图</div>
+          </div>
+          <button id="imagePreviewNextBtn" type="button" class="image-preview-arrow image-preview-next" aria-label="下一张" disabled>
+            <span aria-hidden="true">›</span>
+          </button>
+        </div>
+        <div id="imagePreviewThumbs" class="image-preview-thumbs" aria-label="长图页面"></div>
+      </section>
     </main>
 
     <div id="preflightOverlay" class="preflight-overlay" aria-hidden="true">
@@ -436,6 +483,7 @@
     <script src="/js/state.js" defer></script>
     <script src="/js/config.js" defer></script>
     <script src="/js/presets.js" defer></script>
+    <script src="/js/topic_preview.js" defer></script>
     <script src="/js/form.js" defer></script>
     <script src="/js/theme.js" defer></script>
     <script src="/js/particles.js" defer></script>
@@ -446,6 +494,7 @@
     <script src="/js/candidates.js" defer></script>
     <script src="/vendor/markdown-it.min.js" defer></script>
     <script src="/js/preview.js" defer></script>
+    <script src="/js/image_preview.js" defer></script>
     <script src="/js/cache.js" defer></script>
     <script src="/js/history.js" defer></script>
     <script src="/js/output_cleanup.js" defer></script>

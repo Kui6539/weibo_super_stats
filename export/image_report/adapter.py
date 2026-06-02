@@ -8,6 +8,7 @@ from export.context import ExportContext
 from export.image_report.models import CommentBlock, ImageAsset, ImageReportConfig, ImageReportData, PostBlock
 from export.report_helpers import clean_image_report_text, format_posts_date_range, iter_report_comments, split_multi_values
 from modules.text_cleaning import normalize_weibo_text
+from modules.topic import build_report_title, normalize_report_title
 
 ISSUE_ONE_SATURDAY = datetime(2026, 4, 25)
 
@@ -15,13 +16,20 @@ ISSUE_ONE_SATURDAY = datetime(2026, 4, 25)
 def build_image_report_data(ctx: ExportContext, config: ImageReportConfig | None = None) -> ImageReportData:
     cfg = config or ImageReportConfig()
     run_config = ctx.config if isinstance(ctx.config, dict) else {}
-    title = cfg.title or str(run_config.get("image_report_title") or "Warma超话周报")
+    title = cfg.title or _title_from_config(run_config)
     issue = cfg.issue or str(run_config.get("issue") or run_config.get("week_issue") or "").strip()
     if not issue:
         issue = str(calculate_weekly_issue(_issue_reference_date(run_config)))
     date_range = cfg.date_range or _date_range_from_config(run_config) or _format_posts_range(ctx.selected_posts)
     posts = [_build_post(ctx.run_dir, post, index) for index, post in enumerate(ctx.selected_posts, start=1)]
     return ImageReportData(title=title, issue=issue, date_range=date_range, posts=posts)
+
+
+def _title_from_config(config: dict[str, Any]) -> str:
+    explicit = normalize_report_title(str(config.get("image_report_title") or config.get("report_title") or ""))
+    if explicit:
+        return explicit
+    return build_report_title(config.get("super_topic_name"), config.get("super_topic"))
 
 
 def _build_post(run_dir: Path, post: dict[str, Any], rank: int) -> PostBlock:

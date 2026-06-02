@@ -7,6 +7,7 @@ from typing import Any
 from export.context import ExportContext
 from export.report_helpers import clean_report_text
 from modules.text_cleaning import normalize_weibo_text
+from modules.topic import build_report_title, format_report_title_with_issue, normalize_report_title
 
 ISSUE_ONE_SATURDAY = datetime(2026, 4, 25)
 
@@ -69,15 +70,12 @@ def _post_link_lines(posts: list[dict[str, Any]]) -> list[str]:
 
 
 def _display_title(config: dict[str, Any]) -> str:
-    title = normalize_weibo_text(str(config.get("image_report_title") or config.get("report_title") or "Warma超话周报"))
+    explicit = normalize_report_title(str(config.get("image_report_title") or config.get("report_title") or ""))
+    title = normalize_weibo_text(explicit or build_report_title(config.get("super_topic_name"), config.get("super_topic")))
     issue = normalize_weibo_text(str(config.get("issue") or config.get("week_issue") or ""))
     if not issue:
         issue = str(_calculate_weekly_issue(_parse_date(config.get("window_end")) or _parse_date(config.get("window_start"))))
-    if issue:
-        normalized = issue[1:-1].strip() if issue.startswith("第") and issue.endswith("期") else issue
-        if f"第{normalized}期" not in title:
-            title = f"{title} 第{normalized}期"
-    return title
+    return format_report_title_with_issue(title, issue)
 
 
 def _date_range(config: dict[str, Any]) -> str:

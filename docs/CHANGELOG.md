@@ -1,9 +1,23 @@
 # Changelog
 
-## v0.10.2 - Unreleased
+## v0.11.0 - Unreleased
 
 ### Added
 
+- 超话名称自动识别：输入超话链接后通过超话 API 解析名称，输入框下方实时显示识别结果。
+- 周报期数输入：支持手动填写或按统计窗口自动计算，期数应用到所有导出标题。
+- 导出标题实时预览：超话名称和期数变化后即时显示最终标题。
+- `/api/topic-preview` 接口：解析超话 ID、识别名称、计算期数并返回标题预览。
+- 预检查新增期数重复检测：如果历史中已存在相同超话和期数的任务，会阻止启动。
+- WebUI 长图预览面板：支持翻页浏览、缩略图导航、键盘左右箭头切换和新窗口打开。
+- 预览按钮支持三态循环切换：关闭 → Markdown 预览 → 长图预览 → 关闭。
+- 缓存目录迁移到项目根 `cache/<run_id>/`，与输出目录分离；旧版 `output/<run_id>/cache/` 仍兼容读取。
+- 微博表情资源统一存放在项目根 `assets/weibo_emoticons/`，不同运行共享复用。
+- `CacheStore` 支持从 manifest 中读取缓存路径，自动识别 legacy 和 project_root 两种位置。
+- `CrawlConfig` 新增 `issue` 字段，贯穿任务全流程。
+- 历史任务索引新增 `report_title`、`issue`、`title_with_issue` 字段。
+- `find_history_duplicate()` 用于检测相同超话和期数的历史重复。
+- `.gitignore` 新增 `cache/` 目录。
 - 输出清理预览支持勾选删除，显示清理原因和缺失文件。
 - 输出清理输出文件完整性检测，返回缺失/已存在/预期文件列表。
 - 超话 Cookie 检测支持最多 3 页解析并返回逐页统计。
@@ -21,6 +35,13 @@
 
 ### Changed
 
+- 导出标题不再硬编码为特定超话，改为跟随输入超话自动识别。
+- 长图页脚从 "Warma Super Topic" 改为动态显示当前超话英文标签。
+- DOCX 默认标题从 "warma超话周报" 改为 "微博超话周报"。
+- 超话名称归一化增强：清理平台后缀（新浪微博超话社区等）、逗号分隔取首项。
+- `ensure_weibo_emoticon_assets()` 默认使用项目根共享目录，reexport 时禁止联网下载。
+- manifest 中 `cache` 字段改为由 `CacheStore.manifest_paths()` 动态生成，包含实际缓存位置。
+- 预设配置新增 `issue` 字段，保存在 preset 中。
 - 自动读取 Cookie 后延迟关闭调试浏览器，并自动触发检测。
 - 输出清理接口与前端支持 `selected_run_ids`，返回全量清理项目。
 - 历史任务列表加载改为自动扫描 output 目录，始终反映最新状态。
@@ -38,6 +59,7 @@
 - 从历史任务重新生成后，Markdown 预览和"打开文件所在位置"因无活跃任务而失败的问题。
 - 周报预览标题栏按钮在窄窗口下换行错位的问题（flex-wrap: nowrap）。
 - 报告文本清理会移除 `#warma超话#`、`#warma[超话]#` 等超话标签。
+- 抓取时超话名称未经归一化直接写入 report_title 的问题。
 
 ## v0.9.2 - Unreleased
 

@@ -18,7 +18,7 @@ from export.markdown_exporter import export_weekly_report_md
 from export.summary_exporter import analyze_active_period, build_summary, write_summary_txt
 from export.weibo_body_exporter import export_weibo_body
 from modules.comments.ranking import build_comment_leaderboards
-from modules.topic import build_report_title
+from modules.topic import build_report_title, format_report_title_with_issue, normalize_report_title
 
 DEFAULT_EXPORT_TYPES = {"markdown", "docx", "excel", "csv", "summary", "weibo_body", "long_images"}
 
@@ -62,7 +62,7 @@ def reexport_from_cache(
     )
     report_title = _report_title_from_config(run_config)
     export_config = dict(run_config) if isinstance(run_config, dict) else {}
-    export_config.setdefault("report_title", report_title)
+    export_config["report_title"] = report_title
 
     files: dict[str, Any] = {
         "markdown": run_dir / "weekly_report.md",
@@ -193,8 +193,14 @@ def _report_title_from_config(config: Any) -> str:
         return build_report_title()
     explicit_title = str(config.get("report_title") or "").strip()
     if explicit_title:
-        return explicit_title
-    return build_report_title(config.get("super_topic_name"), config.get("super_topic"))
+        return format_report_title_with_issue(
+            normalize_report_title(explicit_title),
+            config.get("issue") or config.get("week_issue"),
+        )
+    return format_report_title_with_issue(
+        build_report_title(config.get("super_topic_name"), config.get("super_topic")),
+        config.get("issue") or config.get("week_issue"),
+    )
 
 
 def _restore_image_paths_from_manifest(

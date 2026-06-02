@@ -28,7 +28,7 @@ from export.report_helpers import (
 )
 
 
-DEFAULT_REPORT_TITLE = "warma超话周报"
+DEFAULT_REPORT_TITLE = "微博超话周报"
 
 
 def export_docx(ctx: ExportContext, path: Path | None = None, max_bytes: int = DOCX_SIZE_LIMIT_BYTES) -> list[Path]:

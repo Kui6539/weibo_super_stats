@@ -59,6 +59,8 @@ scripts\smoke_test.bat
 - 纯函数优先放到 `modules/` 或 `export/`。
 - 导出器不得访问网络。
 - 离线重新生成报告不得触发抓取、评论请求或图片下载。
+- 新任务缓存默认写入项目根目录 `cache/<run_id>/`；旧版 `output/<run_id>/cache/` 仅作为兼容读取路径。
+- 微博表情资源默认写入项目根目录 `assets/weibo_emoticons/`；如需隔离可设置 `WEIBO_STATS_EMOTICON_DIR`。
 
 ## 新增导出器
 
@@ -95,6 +97,7 @@ WebUI 使用原生 JS 模块化文件：
 - `web/js/api.js`：fetch 封装。
 - `web/js/state.js`：前端状态。
 - `web/js/form.js`：表单。
+- `web/js/topic_preview.js`：超话名称识别、期数输入和导出标题预览。
 - `web/js/cookie.js`：Cookie 区域。
 - `web/js/preflight.js`：预检查。
 - `web/js/progress.js`：任务状态。

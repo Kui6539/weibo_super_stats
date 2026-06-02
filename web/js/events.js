@@ -9,9 +9,11 @@ window.WeiboEvents = {
     candidatesController,
     cacheController,
     presetController,
+    topicPreviewController,
     historyController,
     outputCleanupController,
     previewController,
+    imagePreviewController,
     logsController,
     preflightController,
     helpController,
@@ -123,12 +125,48 @@ window.WeiboEvents = {
       control?.addEventListener("change", () => outputCleanupController.resetPreview());
     });
 
-    controls.preview.addEventListener("click", () => {
-      if (ui.previewPanel.getAttribute("aria-hidden") === "true") {
-        previewController.load();
-      } else {
-        previewController.hide();
+    function currentPreviewMode() {
+      if (ui.previewPanel.getAttribute("aria-hidden") === "false") return "md";
+      if (ui.imagePreviewPanel?.getAttribute("aria-hidden") === "false") return "pic";
+      return "off";
+    }
+
+    function updatePreviewButton(mode = currentPreviewMode()) {
+      const button = controls.preview;
+      if (!button) return;
+      const showBadge = mode === "md" || mode === "pic";
+      const badgeText = mode === "md" ? "MD" : mode === "pic" ? "PIC" : "";
+      button.innerHTML = `
+        <span class="preview-toggle-text">预览</span>
+        <span id="previewModeBadge" class="preview-mode-badge ${showBadge ? mode : "hidden"}" ${showBadge ? "" : "aria-hidden=\"true\""}>${badgeText}</span>
+      `;
+      ui.previewModeBadge = button.querySelector("#previewModeBadge");
+    }
+
+    async function cyclePreviewMode() {
+      const mode = currentPreviewMode();
+      if (mode === "off") {
+        await previewController.load();
+        updatePreviewButton("md");
+        return;
       }
+      if (mode === "md") {
+        if (imagePreviewController?.hasPages()) {
+          previewController.hide();
+          imagePreviewController?.show();
+          updatePreviewButton("pic");
+          return;
+        }
+        previewController.hide();
+        updatePreviewButton("off");
+        return;
+      }
+      imagePreviewController?.hide();
+      updatePreviewButton("off");
+    }
+
+    controls.preview.addEventListener("click", () => {
+      cyclePreviewMode();
     });
     document.addEventListener("click", (event) => {
       historyController.handleDocumentClick(event);
@@ -142,8 +180,17 @@ window.WeiboEvents = {
       historyController.closeDropdown();
       toggleCleanupDropdown(false);
     });
-    controls.refreshPreview.addEventListener("click", () => previewController.load({ force: true }));
+    controls.refreshPreview.addEventListener("click", async () => {
+      await previewController.load({ force: true });
+      updatePreviewButton("md");
+    });
     controls.copyMarkdown.addEventListener("click", previewController.copy);
+
+    controls.imagePreviewPrev?.addEventListener("click", () => imagePreviewController?.prev());
+    controls.imagePreviewNext?.addEventListener("click", () => imagePreviewController?.next());
+    controls.refreshImagePreview?.addEventListener("click", () => imagePreviewController?.refresh());
+    controls.openImagePreview?.addEventListener("click", () => imagePreviewController?.openInNewWindow());
+    ui.imagePreviewThumbs?.addEventListener("click", (event) => imagePreviewController?.handleThumbClick(event));
 
     controls.logSearch.addEventListener("input", () => logsController.render(taskController.getCurrentJob()));
     controls.logLevelFilter.addEventListener("change", () => logsController.render(taskController.getCurrentJob()));
@@ -188,18 +235,45 @@ window.WeiboEvents = {
         historyController.closePreview();
         return;
       }
+      if (event.key === "Escape" && ui.imagePreviewPanel?.getAttribute("aria-hidden") === "false") {
+        imagePreviewController?.hide();
+        updatePreviewButton("off");
+        return;
+      }
       if (event.key === "Escape" && ui.preflightOverlay.classList.contains("visible")) {
         preflightController.closeModal();
+      }
+      if (
+        ui.imagePreviewPanel?.getAttribute("aria-hidden") === "false" &&
+        !event.altKey &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.shiftKey
+      ) {
+        if (event.key === "ArrowLeft") {
+          event.preventDefault();
+          imagePreviewController?.prev();
+          return;
+        }
+        if (event.key === "ArrowRight") {
+          event.preventDefault();
+          imagePreviewController?.next();
+          return;
+        }
       }
       if (event.key === "Escape") {
         historyController.closeDropdown();
         toggleCleanupDropdown(false);
       }
     });
+    window.addEventListener("weibo:preview-mode-change", (event) => {
+      updatePreviewButton(event.detail?.mode || currentPreviewMode());
+    });
     document.addEventListener("visibilitychange", () => taskController.handleVisibilityChange());
 
     [
       fields.superTopic,
+      fields.issue,
       fields.cookie,
       fields.windowStart,
       fields.windowEnd,
@@ -217,11 +291,18 @@ window.WeiboEvents = {
           cookieController.setValidationState("unverified");
           cookieController.updateSummary();
         }
+        if (field === fields.issue) {
+          topicPreviewController.sanitizeIssue();
+        }
+        if (field === fields.superTopic || field === fields.cookie || field === fields.windowStart || field === fields.windowEnd) {
+          topicPreviewController.scheduleRefresh();
+        }
         preflightController.resetInline();
         configController.scheduleSave();
       });
     });
 
+    updatePreviewButton("off");
     logsController.initFloating();
   },
 };

@@ -11,6 +11,7 @@ from core.crawl_types import CrawlConfig
 from core.errors import ConfigError
 from core.paths import is_writable_dir, normalize_output_dir
 from core.version import __version__
+from modules.topic import calculate_weekly_issue, normalize_issue_value
 from modules.weibo_url import parse_super_topic_id
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -31,6 +32,7 @@ DEFAULT_PRESET: dict[str, Any] = {
     "repost_weight": "0.1",
     "pause_seconds": "1.0",
     "output_dir": "output",
+    "issue": "",
     "export_types": ["markdown", "docx", "excel", "csv", "summary"],
     "download_images": True,
 }
@@ -61,6 +63,7 @@ PRESET_KEYS = {
     "repost_weight",
     "pause_seconds",
     "output_dir",
+    "issue",
     "export_types",
     "download_images",
 }
@@ -126,6 +129,7 @@ def load_saved_config() -> dict[str, Any]:
         "repost_weight": str(data.get("repost_weight") or "").strip(),
         "pause_seconds": str(data.get("pause_seconds") or "").strip(),
         "output_dir": str(data.get("output_dir") or "").strip(),
+        "issue": str(data.get("issue") or "").strip(),
         "theme": theme,
         "advanced_mode": advanced_mode,
         "log_position": normalize_log_position(data.get("log_position")),
@@ -178,7 +182,7 @@ def save_user_config(payload: dict[str, Any]) -> dict[str, Any]:
     preset = presets[active]
     global_config = current.setdefault("global", deepcopy(DEFAULT_GLOBAL))
 
-    for key in ("super_topic", "max_pages", "topic_comment_factor", "likes_weight", "comment_weight", "author_reply_weight", "repost_weight", "pause_seconds", "output_dir", "export_types", "download_images"):
+    for key in ("super_topic", "max_pages", "topic_comment_factor", "likes_weight", "comment_weight", "author_reply_weight", "repost_weight", "pause_seconds", "output_dir", "issue", "export_types", "download_images"):
         if key in payload:
             preset[key] = _normalize_preset_value(key, payload.get(key))
     if "cookie" in payload:
@@ -258,6 +262,12 @@ def validate_config_payload(payload: dict[str, Any]) -> list[dict[str, str]]:
         else:
             add("time_order", "时间范围", "error", "结束时间必须晚于开始时间。建议检查周报统计区间。")
 
+    issue = normalize_issue_value(payload.get("issue"))
+    if issue:
+        add("issue", "周报期数", "ok", f"将导出为第 {issue} 期。")
+    else:
+        add("issue", "周报期数", "warning", "未填写期数，将按统计窗口自动计算。")
+
     try:
         max_pages = int(str(payload.get("max_pages", "80")).strip())
         if max_pages > 0:
@@ -330,6 +340,7 @@ def build_crawl_config(payload: dict[str, Any]) -> tuple[CrawlConfig, Path]:
     window_end = parse_datetime_local(payload.get("window_end"))
     if window_end <= window_start:
         raise ValueError("结束时间必须晚于开始时间。")
+    issue = normalize_issue_value(payload.get("issue")) or str(calculate_weekly_issue(window_end))
 
     days_window = max(1, int((window_end - window_start).days) + 1)
     cfg = CrawlConfig(
@@ -346,6 +357,7 @@ def build_crawl_config(payload: dict[str, Any]) -> tuple[CrawlConfig, Path]:
         window_start=window_start,
         window_end=window_end,
         carryover_hours=0,
+        issue=issue,
     )
     return cfg, normalize_output_dir(payload.get("output_dir"))
 
@@ -366,6 +378,7 @@ def app_defaults() -> dict[str, Any]:
         "window_start": datetime_local_value(window_start),
         "window_end": datetime_local_value(window_end),
         "output_dir": str(Path.cwd() / "output"),
+        "issue": str(calculate_weekly_issue(window_end)),
         "theme": "dark",
         "advanced_mode": "false",
         "log_position": {"mode": "bubble", "left": 18, "top": 86},
@@ -393,6 +406,7 @@ def flatten_active_config(config: dict[str, Any]) -> dict[str, Any]:
         "repost_weight": str(preset.get("repost_weight") or "0.1").strip(),
         "pause_seconds": str(preset.get("pause_seconds") or "").strip(),
         "output_dir": str(preset.get("output_dir") or "").strip(),
+        "issue": str(preset.get("issue") or "").strip(),
         "theme": str(global_config.get("theme") or "").strip(),
         "advanced_mode": str(global_config.get("advanced_mode") or "").strip(),
         "log_position": normalize_log_position(global_config.get("log_position")),
@@ -543,6 +557,7 @@ def _strip_config_for_ui(config: dict[str, Any]) -> dict[str, Any]:
         "repost_weight": str(config.get("repost_weight") or "0.1").strip(),
         "pause_seconds": str(config.get("pause_seconds") or "").strip(),
         "output_dir": str(config.get("output_dir") or "").strip(),
+        "issue": str(config.get("issue") or "").strip(),
         "theme": str(config.get("theme") or "").strip(),
         "advanced_mode": str(config.get("advanced_mode") or "").strip(),
         "log_position": normalize_log_position(config.get("log_position")),
@@ -563,6 +578,8 @@ def _normalize_preset_value(key: str, value: Any) -> Any:
         return [item for item in items if item] or list(DEFAULT_PRESET["export_types"])
     if key == "download_images":
         return _as_bool(value)
+    if key == "issue":
+        return normalize_issue_value(value)
     return str(value or "").strip()
 
 

@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
-from core.cache import CacheStore
+from core.cache import CACHE_ROOT_ENV, CacheStore
 from export.context import ExportContext
 from export.summary_exporter import build_summary
 from modules.comments.ranking import build_comment_leaderboards
@@ -35,7 +36,15 @@ def load_fixture(name: str) -> Any:
 @contextmanager
 def make_temp_run_dir() -> Iterator[Path]:
     with tempfile.TemporaryDirectory() as tmp:
-        yield Path(tmp)
+        old_cache_root = os.environ.get(CACHE_ROOT_ENV)
+        os.environ[CACHE_ROOT_ENV] = str(Path(tmp) / ".project_cache")
+        try:
+            yield Path(tmp)
+        finally:
+            if old_cache_root is None:
+                os.environ.pop(CACHE_ROOT_ENV, None)
+            else:
+                os.environ[CACHE_ROOT_ENV] = old_cache_root
 
 
 def write_cache_fixture(run_dir: Path) -> CacheStore:

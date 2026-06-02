@@ -45,7 +45,8 @@
 }
 
 .layout.has-preview,
-.layout.has-candidate {
+.layout.has-candidate,
+.layout.has-image-preview {
   grid-template-columns: minmax(360px, 520px) minmax(580px, 1fr);
   column-gap: 18px;
 }
@@ -134,7 +135,8 @@
 }
 
 .layout.has-preview .preview-panel,
-.layout.has-candidate .candidate-panel {
+.layout.has-candidate .candidate-panel,
+.layout.has-image-preview .image-preview-panel {
   opacity: 1;
   pointer-events: auto;
   transform: translateX(0);
@@ -159,14 +161,16 @@
 
 .layout,
   .layout.has-preview,
-  .layout.has-candidate {
+  .layout.has-candidate,
+  .layout.has-image-preview {
     grid-template-columns: 1fr;
     row-gap: 16px;
     padding: 16px;
   }
 
 .layout.has-preview .preview-panel,
-  .layout.has-candidate .candidate-panel {
+  .layout.has-candidate .candidate-panel,
+  .layout.has-image-preview .image-preview-panel {
     transform: translateY(0);
   }
 }

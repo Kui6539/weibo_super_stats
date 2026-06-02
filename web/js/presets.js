@@ -1,5 +1,5 @@
 window.WeiboPresets = {
-  createController({ fields, controls, api, setBusy, showToast, formController, scheduleConfigSave }) {
+  createController({ fields, controls, api, setBusy, showToast, formController, scheduleConfigSave, onPresetApplied }) {
     let data = { presets: {}, active_preset: "default" };
 
     async function load() {
@@ -29,6 +29,7 @@ window.WeiboPresets = {
       data = response.data || response;
       applyPreset(data.active_config || {});
       render();
+      onPresetApplied?.();
       showToast("已切换预设");
     }
 
@@ -87,6 +88,7 @@ window.WeiboPresets = {
       data = response.data || response;
       render();
       applyPreset(data.active_config || {});
+      onPresetApplied?.();
       showToast("预设已复制");
     }
 
@@ -114,11 +116,13 @@ window.WeiboPresets = {
       data = response.data || response;
       render();
       applyPreset(data.active_config || {});
+      onPresetApplied?.();
       showToast("预设已删除");
     }
 
     function applyPreset(config) {
       if (config.super_topic !== undefined) fields.superTopic.value = config.super_topic || "";
+      if (config.issue !== undefined) fields.issue.value = config.issue || "";
       if (config.max_pages !== undefined) fields.maxPages.value = config.max_pages || 80;
       if (config.topic_comment_factor !== undefined) fields.topicCommentFactor.value = config.topic_comment_factor || 1;
       if (config.pause_seconds !== undefined) fields.pauseSeconds.value = config.pause_seconds || 1;

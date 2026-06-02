@@ -58,7 +58,7 @@ def _render_page(
         </div>
         <footer class="page-footer">
           <span>Made for Weibo</span>
-          <span>Warma Super Topic</span>
+          <span>{_e(_english_topic_label(data))}</span>
         </footer>
       </section>"""
 
@@ -158,7 +158,7 @@ def _asset_src(image: ImageAsset, output_dir: Path) -> str:
 
 
 def _display_title(data: ImageReportData) -> str:
-    title = data.title.strip() or "Warma超话周报"
+    title = data.title.strip() or "微博超话周报"
     issue = data.issue.strip()
     if issue:
         normalized_issue = issue
@@ -167,6 +167,13 @@ def _display_title(data: ImageReportData) -> str:
         if f"第{normalized_issue}期" not in title:
             return f"{title} 第{normalized_issue}期"
     return title
+
+
+def _english_topic_label(data: ImageReportData) -> str:
+    title = data.title.strip()
+    title = re.sub(r"\s*第[^\s]+期\s*$", "", title)
+    title = title.removesuffix("周报").removesuffix("超话").strip()
+    return f"{title or 'Weibo'} Super Topic"
 
 
 def _style(config: ImageReportConfig) -> str:

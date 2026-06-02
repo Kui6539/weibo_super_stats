@@ -94,6 +94,9 @@ window.WeiboHistory = {
       return items.filter((item) => {
         const haystack = [
           item.run_id,
+          item.title_with_issue,
+          item.report_title,
+          item.issue,
           item.super_topic_name,
           item.super_topic_id,
           item.super_topic,
@@ -113,7 +116,7 @@ window.WeiboHistory = {
 
     function renderItem(item) {
       const files = item.files || {};
-      const title = item.super_topic_name || item.super_topic_id || item.super_topic || "未知超话";
+      const title = item.title_with_issue || item.report_title || item.super_topic_name || item.super_topic_id || item.super_topic || "未知超话";
       const badges = ["markdown", "docx", "excel", "csv", "summary", "weibo_body", "images"]
         .map((key) => `<span class="mini-badge ${files[key] ? "ok" : ""}">${fileLabel(key)}</span>`)
         .join("");
@@ -187,7 +190,7 @@ window.WeiboHistory = {
       if (!confirm("确定要从该历史任务的 cache 重新生成报告吗？")) return;
       closeDropdown();
       const item = items.find((row) => row.run_id === runId);
-      const topicLabel = item?.super_topic_name || item?.super_topic_id || runId;
+      const topicLabel = item?.title_with_issue || item?.report_title || item?.super_topic_name || item?.super_topic_id || runId;
       renderJob({
         status: "exporting",
         stage: "export",
@@ -247,6 +250,8 @@ window.WeiboHistory = {
       ui.historyDetailMeta.textContent = item.run_id || "";
       ui.historyDetailContent.innerHTML = `
         <div class="detail-grid">
+          ${detailRow("标题", item.title_with_issue || item.report_title || item.super_topic_name || item.super_topic_id || item.super_topic)}
+          ${detailRow("期数", item.issue || "无")}
           ${detailRow("创建时间", item.created_at)}
           ${detailRow("更新时间", item.updated_at)}
           ${detailRow("超话", item.super_topic_name || item.super_topic_id || item.super_topic)}

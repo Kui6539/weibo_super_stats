@@ -10,6 +10,8 @@ from core.cache import CacheStore, read_manifest, sanitize_for_cache
 from core.config import load_saved_config
 from core.errors import ConfigError
 from core.paths import is_relative_to, normalize_output_dir
+from modules.topic import build_report_title, format_report_title_with_issue, normalize_issue_value
+from modules.weibo_url import parse_super_topic_id
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 HISTORY_PATH = ROOT_DIR / "weibo_stats_history.json"
@@ -98,17 +100,59 @@ def find_history_item(run_id: str) -> dict[str, Any] | None:
     return None
 
 
+def find_history_duplicate(super_topic: Any, issue: Any, *, skip_run_id: str | None = None) -> dict[str, Any] | None:
+    target_topic_id, target_issue = canonical_topic_issue(super_topic=super_topic, issue=issue)
+    if not target_topic_id or not target_issue:
+        return None
+    skip_id = str(skip_run_id or "").strip()
+    for item in get_history_items():
+        if skip_id and str(item.get("run_id") or "") == skip_id:
+            continue
+        item_topic_id, item_issue = canonical_topic_issue(
+            super_topic_id=item.get("super_topic_id"),
+            super_topic=item.get("super_topic"),
+            issue=item.get("issue"),
+        )
+        if item_topic_id == target_topic_id and item_issue == target_issue:
+            return item
+    return None
+
+
+def canonical_topic_issue(
+    *,
+    super_topic_id: Any = None,
+    super_topic: Any = None,
+    issue: Any = None,
+) -> tuple[str, str]:
+    topic_id = str(super_topic_id or "").strip() or str(parse_super_topic_id(str(super_topic or "")) or "").strip()
+    normalized_issue = normalize_issue_value(issue)
+    return topic_id, normalized_issue
+
+
 def normalize_history_item(item: dict[str, Any]) -> dict[str, Any]:
     report_dir = str(item.get("report_dir") or "").replace("\\", "/")
     manifest_path = str(item.get("manifest_path") or "").replace("\\", "/")
+    report_title = str(item.get("report_title") or "").strip()
+    issue = normalize_issue_value(item.get("issue"))
+    super_topic = str(item.get("super_topic") or "")
+    super_topic_name = str(item.get("super_topic_name") or "")
+    title_with_issue = _history_title_with_issue(
+        report_title=report_title,
+        issue=issue,
+        super_topic_name=super_topic_name,
+        super_topic=super_topic,
+    )
     return sanitize_for_cache(
         {
             "run_id": str(item.get("run_id") or Path(report_dir).name or ""),
             "created_at": str(item.get("created_at") or ""),
             "updated_at": str(item.get("updated_at") or ""),
-            "super_topic": str(item.get("super_topic") or ""),
-            "super_topic_name": str(item.get("super_topic_name") or ""),
+            "super_topic": super_topic,
+            "super_topic_name": super_topic_name,
             "super_topic_id": str(item.get("super_topic_id") or ""),
+            "report_title": report_title,
+            "issue": issue,
+            "title_with_issue": title_with_issue,
             "window_start": str(item.get("window_start") or ""),
             "window_end": str(item.get("window_end") or ""),
             "selected_count": _int(item.get("selected_count")),
@@ -139,6 +183,8 @@ def history_item_from_manifest(report_dir: Path, manifest: dict[str, Any]) -> di
         "super_topic": str(manifest.get("super_topic") or ""),
         "super_topic_name": str(manifest.get("super_topic_name") or ""),
         "super_topic_id": str(manifest.get("super_topic_id") or ""),
+        "report_title": str(manifest.get("report_title") or ""),
+        "issue": str(manifest.get("issue") or ""),
         "window_start": str(manifest.get("window_start") or ""),
         "window_end": str(manifest.get("window_end") or ""),
         "selected_count": _int(manifest.get("selected_count")),
@@ -216,6 +262,17 @@ def _backup_broken_history(path: Path) -> None:
         shutil.copy2(path, path.with_name("weibo_stats_history.broken.json"))
     except OSError:
         return
+
+
+def _history_title_with_issue(
+    *,
+    report_title: str,
+    issue: str,
+    super_topic_name: str,
+    super_topic: str,
+) -> str:
+    base_title = report_title.strip() or build_report_title(super_topic_name, super_topic)
+    return format_report_title_with_issue(base_title, issue) or base_title
 
 
 def _resolve_output_root(output_dir: str | Path) -> Path:

@@ -54,6 +54,97 @@
   margin-bottom: 14px;
 }
 
+.topic-meta {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px 14px;
+  align-items: stretch;
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  padding: 11px 12px;
+  margin: -6px 0 14px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.topic-meta-main,
+.topic-title-preview,
+.topic-issue-field {
+  min-width: 0;
+}
+
+.topic-meta-main,
+.topic-title-preview {
+  display: grid;
+  gap: 4px;
+}
+
+.topic-meta-label {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.topic-meta-main strong,
+.topic-title-preview strong {
+  min-width: 0;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.topic-issue-field {
+  display: grid;
+  justify-items: end;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.topic-issue-label {
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.topic-issue-input {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.topic-issue-input input {
+  width: 48px;
+  height: 30px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 4px 7px;
+  text-align: center;
+  font-weight: 700;
+  color: var(--text);
+  background: rgba(0, 0, 0, 0.26);
+}
+
+.topic-title-preview {
+  grid-column: 1 / -1;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  padding-top: 10px;
+}
+
+.topic-preview-message {
+  font-size: 12px;
+}
+
+@media (max-width: 640px) {
+  .topic-meta {
+    grid-template-columns: 1fr;
+  }
+
+  .topic-issue-field {
+    justify-items: start;
+  }
+}
+
 .grid {
   display: grid;
   gap: 12px;

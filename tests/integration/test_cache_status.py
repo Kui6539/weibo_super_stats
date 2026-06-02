@@ -20,17 +20,17 @@ class CacheStatusIntegrationTests(unittest.TestCase):
 
     def test_missing_selected_posts_disables_reexport(self) -> None:
         with make_temp_run_dir() as run_dir:
-            write_cache_fixture(run_dir)
-            (run_dir / "cache" / "selected_posts.json").unlink()
+            store = write_cache_fixture(run_dir)
+            (store.cache_dir / "selected_posts.json").unlink()
             status = CacheStore(run_dir).get_cache_status()
             self.assertFalse(status["can_reexport"])
             self.assertTrue(any("selected_posts" in item for item in status["missing"]))
 
     def test_missing_posts_scored_and_hydrated_disables_reexport(self) -> None:
         with make_temp_run_dir() as run_dir:
-            write_cache_fixture(run_dir)
-            (run_dir / "cache" / "posts_scored.json").unlink()
-            (run_dir / "cache" / "posts_hydrated.json").unlink()
+            store = write_cache_fixture(run_dir)
+            (store.cache_dir / "posts_scored.json").unlink()
+            (store.cache_dir / "posts_hydrated.json").unlink()
             status = CacheStore(run_dir).get_cache_status()
             self.assertFalse(status["can_reexport"])
             self.assertTrue(any("posts" in item for item in status["missing"]))

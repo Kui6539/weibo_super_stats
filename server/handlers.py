@@ -29,6 +29,7 @@ from core.config import (
     duplicate_preset,
     get_presets_payload,
     load_saved_config,
+    parse_datetime_local,
     save_user_config,
     save_preset,
     validate_config_payload,
@@ -36,6 +37,7 @@ from core.config import (
 from core.errors import WeiboStatsError, to_error_response
 from core.history import (
     add_history_item_from_manifest,
+    find_history_duplicate,
     find_history_item,
     get_history_items,
     load_history,
@@ -56,6 +58,14 @@ from core.paths import is_relative_to, normalize_output_dir, safe_resolve
 from crawler import parse_super_topic_id
 from export.reexport import reexport_from_cache
 from modules.crawler_client import WeiboClient
+from modules.topic import (
+    build_report_title,
+    calculate_weekly_issue,
+    format_report_title_with_issue,
+    normalize_issue_value,
+    normalize_super_topic_name,
+)
+from modules.weibo_chaohua_api import CHAOHUA_API_URL, extract_chaohua_topic_name, initial_chaohua_params
 from server.responses import (
     json_error,
     json_ok,
@@ -121,6 +131,9 @@ class AppRequestHandler(BaseHTTPRequestHandler):
         try:
             if path == "/api/preflight":
                 self.handle_preflight()
+                return
+            if path == "/api/topic-preview":
+                self.handle_topic_preview()
                 return
             if path == "/api/check-cookie":
                 self.handle_check_cookie()
@@ -228,6 +241,9 @@ class AppRequestHandler(BaseHTTPRequestHandler):
 
     def handle_start(self) -> None:
         payload = parse_json_body(self)
+        duplicate = find_duplicate_topic_issue(payload)
+        if duplicate:
+            raise ValueError(build_duplicate_topic_issue_message(duplicate))
         cfg, output_dir = build_crawl_config(payload)
         save_user_config(payload)
         job = create_job(cfg, output_dir)
@@ -262,6 +278,11 @@ class AppRequestHandler(BaseHTTPRequestHandler):
     def handle_preflight(self) -> None:
         payload = parse_json_body(self)
         data = build_preflight(payload)
+        json_ok(self, data, **data)
+
+    def handle_topic_preview(self) -> None:
+        payload = parse_json_body(self)
+        data = resolve_topic_preview(payload)
         json_ok(self, data, **data)
 
     def handle_check_cookie(self) -> None:
@@ -587,6 +608,21 @@ class AppRequestHandler(BaseHTTPRequestHandler):
 
 def build_preflight(payload: dict[str, Any]) -> dict[str, Any]:
     checks = validate_config_payload(payload)
+    duplicate = find_duplicate_topic_issue(payload)
+    if duplicate:
+        checks.append({
+            "id": "duplicate_issue",
+            "label": "周报期数",
+            "status": "error",
+            "message": build_duplicate_topic_issue_message(duplicate),
+        })
+    else:
+        checks.append({
+            "id": "duplicate_issue",
+            "label": "周报期数",
+            "status": "ok",
+            "message": "当前超话与期数未发现重复历史。",
+        })
     job = get_current_job()
     if job and job.status in ACTIVE_STATUSES:
         checks.append({"id": "active_job", "label": "任务状态", "status": "error", "message": "当前已有任务正在运行。请等待完成或取消后再开始。"})
@@ -594,6 +630,91 @@ def build_preflight(payload: dict[str, Any]) -> dict[str, Any]:
         checks.append({"id": "active_job", "label": "任务状态", "status": "ok", "message": "当前没有运行中的任务。"})
     can_start = not any(item["status"] == "error" for item in checks)
     return {"can_start": can_start, "checks": checks}
+
+
+def find_duplicate_topic_issue(payload: dict[str, Any]) -> dict[str, Any] | None:
+    super_topic = str(payload.get("super_topic") or "").strip()
+    issue = normalize_issue_value(payload.get("issue")) or str(calculate_weekly_issue(_topic_preview_reference(payload)))
+    if not super_topic or not issue:
+        return None
+    return find_history_duplicate(super_topic, issue)
+
+
+def build_duplicate_topic_issue_message(item: dict[str, Any]) -> str:
+    title = str(item.get("title_with_issue") or item.get("report_title") or item.get("super_topic_name") or item.get("run_id") or "该周报")
+    run_id = str(item.get("run_id") or "")
+    if run_id:
+        return f"已存在相同超话与期数的历史任务：{title}（{run_id}）。"
+    return f"已存在相同超话与期数的历史任务：{title}。"
+
+
+def resolve_topic_preview(
+    payload: dict[str, Any],
+    *,
+    client_factory: Any = WeiboClient,
+) -> dict[str, str]:
+    super_topic = str(payload.get("super_topic") or "").strip()
+    topic_id = parse_super_topic_id(super_topic) if super_topic else ""
+    issue = normalize_issue_value(payload.get("issue")) or str(calculate_weekly_issue(_topic_preview_reference(payload)))
+    if not topic_id:
+        return {
+            "super_topic_id": "",
+            "topic_name": "",
+            "issue": issue,
+            "title": "",
+            "title_with_issue": "",
+            "source": "empty",
+            "message": "无法解析超话 ID，请检查链接或 ID。",
+        }
+
+    topic_name = normalize_super_topic_name(super_topic)
+    source = "fallback" if topic_name else "id"
+    message = "已解析超话 ID，等待识别名称。"
+    cookie = str(payload.get("cookie") or "").strip()
+    if cookie:
+        try:
+            client = client_factory(cookie=cookie, timeout=(3, 8), retry=0, pause_seconds=0)
+            data = client.get_json(
+                CHAOHUA_API_URL,
+                params=initial_chaohua_params(topic_id),
+                headers={
+                    "Referer": f"https://weibo.com/p/{topic_id}/super_index",
+                    "X-Requested-With": "XMLHttpRequest",
+                    "Accept": "application/json, text/plain, */*",
+                },
+            )
+            fetched_name = normalize_super_topic_name(extract_chaohua_topic_name(data))
+            if fetched_name:
+                topic_name = fetched_name
+                source = "chaohua_api"
+                message = "已识别超话名称。"
+        except Exception as err:
+            message = f"已解析超话 ID，但名称识别失败：{type(err).__name__}"
+    else:
+        message = "已解析超话 ID；填写 Cookie 后可识别超话名称。"
+
+    title = build_report_title(topic_name, super_topic)
+    title_with_issue = format_report_title_with_issue(title, issue)
+    if source == "chaohua_api":
+        message = title_with_issue
+    return {
+        "super_topic_id": topic_id,
+        "topic_name": topic_name,
+        "issue": issue,
+        "title": title,
+        "title_with_issue": title_with_issue,
+        "source": source,
+        "message": message,
+    }
+
+
+def _topic_preview_reference(payload: dict[str, Any]) -> Any:
+    for key in ("window_end", "window_start"):
+        try:
+            return parse_datetime_local(payload.get(key))
+        except ValueError:
+            continue
+    return None
 
 
 def check_cookie_state(payload: dict[str, Any]) -> dict[str, str]:
