@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import shutil
 import threading
 import uuid
 from datetime import datetime
@@ -23,7 +24,7 @@ from core.events import (
     stage_label,
 )
 from core.history import add_history_item_from_manifest
-from core.paths import make_run_dir
+from core.paths import is_relative_to, make_run_dir
 from core.recovery import recovery_suggestions_for_status
 from crawler import (
     WeiboSuperTopicCrawler,
@@ -43,10 +44,12 @@ from export.manifest import build_manifest, write_manifest
 from export.summary_exporter import analyze_active_period, build_summary
 from export.weibo_body_exporter import export_weibo_body
 from modules.comments.ranking import build_comment_leaderboards
+from modules.images.candidate_thumbnails import build_candidate_thumbnails
 from modules.text_cleaning import remove_weibo_private_chars
 from modules.topic import build_report_title, format_report_title_with_issue
 
 ACTIVE_STATUSES = {"running", "awaiting_selection", "exporting"}
+RUN_DIR_RE = re.compile(r"^\d{8}_\d{6}$")
 _console_lock = threading.Lock()
 _job_lock = threading.RLock()
 _current_job: CrawlJob | None = None
@@ -102,11 +105,17 @@ def serialize_candidate(post: dict, index: int) -> dict[str, Any]:
     image_count = to_int(post.get("image_count"))
     if image_count <= 0:
         image_count = len(split_multi_value(post.get("original_image_urls")))
-    preview_paths = [
-        path
-        for path in split_multi_value(post.get("image_local_paths"))
-        if Path(path).exists() and Path(path).is_file()
-    ][:3]
+    thumbnail_urls = post.get("candidate_thumbnail_urls")
+    if isinstance(thumbnail_urls, list):
+        preview_paths = [str(path) for path in thumbnail_urls if str(path or "").strip()][:3]
+    else:
+        preview_paths = split_multi_value(post.get("candidate_thumbnail_paths"))[:3]
+    if not preview_paths:
+        preview_paths = [
+            path
+            for path in split_multi_value(post.get("image_local_paths"))
+            if Path(path).exists() and Path(path).is_file()
+        ][:3]
     return {
         "index": index,
         "rank": index + 1,
@@ -225,6 +234,9 @@ class CrawlJob:
         self.required_pick_count = 0
         self.result: dict[str, Any] | None = None
         self.error: str | None = None
+        self.run_dir: Path | None = None
+        self.cancel_cleanup: dict[str, Any] | None = None
+        self.artifact_cleanup: dict[str, Any] | None = None
         self.selected_indexes: list[int] | None = None
         self.cancel_requested = threading.Event()
         self.super_topic_name = ""
@@ -369,6 +381,8 @@ class CrawlJob:
                 "required_pick_count": self.required_pick_count,
                 "result": visible_job_result(self.result),
                 "error": self.error,
+                "cancel_cleanup": sanitize_for_cache(self.cancel_cleanup),
+                "artifact_cleanup": sanitize_for_cache(self.artifact_cleanup),
                 "cancel_requested": self.cancel_requested.is_set(),
                 "recovery_suggestions": recovery_suggestions_for_status(
                     {"status": self.status, "error": self.error, "progress": self.progress}
@@ -442,10 +456,6 @@ class CrawlJob:
                 return False
             self.cancel_requested.set()
             self.progress["message"] = message
-            if self.status == "awaiting_selection":
-                self.status = "cancelled"
-                self.stage = "cancelled"
-                self.stage_label = stage_label("cancelled")
             self._append_event_unlocked(
                 JobEvent(type="warning", stage=self.stage, message=message, level="warning")
             )
@@ -633,12 +643,15 @@ class CrawlJob:
         return list(rows)
 
     def _run(self) -> None:
+        run_dir: Path | None = None
+        cache_store: CacheStore | None = None
         try:
             self.set_stage("init", message="任务初始化")
             self.add_log("开始任务...", stage="init")
             self.add_log("计算方式：Python", stage="init")
             self.output_dir.mkdir(parents=True, exist_ok=True)
             run_dir = make_run_dir(self.output_dir)
+            self.run_dir = run_dir
             image_dir = run_dir / "images"
             cache_store = CacheStore(run_dir)
             cache_store.init()
@@ -691,6 +704,37 @@ class CrawlJob:
             candidates = select_weekly_posts(posts_all, limit=20)
             if not candidates:
                 raise CrawlError("当前窗口内没有可用于周报的候选帖子。")
+            self.check_cancelled()
+            self.set_stage("thumbnails", message="开始下载预选帖缩略图")
+            self.update_progress(current=0, total=1, percent=0, message="正在准备预选帖缩略图缓存", stage="thumbnails")
+            thumbnail_summary = build_candidate_thumbnails(
+                candidates,
+                cache_store,
+                cookie=self.cfg.cookie,
+                cancel_checker=self.check_cancelled,
+                progress_callback=self._candidate_thumbnail_log,
+            )
+            if thumbnail_summary.get("success"):
+                total_thumbnails = max(1, int(thumbnail_summary.get("total") or 1))
+                self.update_progress(
+                    current=total_thumbnails,
+                    total=total_thumbnails,
+                    percent=100,
+                    message="预选帖缩略图缓存完成",
+                    stage="thumbnails",
+                )
+                self.add_log(
+                    "预选帖缩略图缓存目录："
+                    f"{thumbnail_summary.get('dir')}；"
+                    f"新下载 {thumbnail_summary.get('downloaded', 0)} 张，"
+                    f"缓存命中 {thumbnail_summary.get('cache_hits', 0)} 张。",
+                    level="success",
+                    stage="thumbnails",
+                )
+            elif thumbnail_summary.get("total"):
+                self.add_log("预选帖缩略图下载失败，将只显示文字节选。", level="warning", stage="thumbnails")
+            else:
+                self.update_progress(current=1, total=1, percent=100, message="预选帖没有图片，跳过缩略图下载", stage="thumbnails")
             self._write_cache_stage(cache_store, "candidates", candidates)
 
             target = min(15, len(candidates))
@@ -926,14 +970,17 @@ class CrawlJob:
             self._set_completed(result)
         except JobCancelled as err:
             self.add_log(str(err), level="warning", stage="cancelled")
+            self._cleanup_incomplete_artifacts(run_dir, cache_store, reason="cancelled")
             self._set_cancelled(str(err))
         except CrawlError as err:
             self.add_log(f"任务失败：{err}", level="error", stage="failed")
+            self._cleanup_incomplete_artifacts(run_dir, cache_store, reason="failed")
             self._set_failed(str(err))
         except Exception as err:
             message = f"{type(err).__name__}: {err}"
             friendly = f"任务执行失败：{message}"
             self.add_log(f"任务失败：{message}", level="error", stage="failed")
+            self._cleanup_incomplete_artifacts(run_dir, cache_store, reason="failed")
             self._set_failed(friendly)
 
     def _run_config_payload(self, run_dir: Path) -> dict[str, Any]:
@@ -996,6 +1043,160 @@ class CrawlJob:
             total=total,
             payload={"label": label, "path": str(path)},
         )
+
+    def _candidate_thumbnail_log(self, event: dict[str, Any]) -> None:
+        message = str(event.get("message") or "").strip()
+        if not message:
+            return
+        level = str(event.get("level") or "info")
+        current = optional_int(event.get("current"))
+        total = optional_int(event.get("total"))
+        if current is not None and total:
+            self.update_progress(
+                current=current,
+                total=total,
+                percent=(current / max(1, total)) * 100,
+                message=message,
+                stage="thumbnails",
+            )
+        elif str(event.get("type") or "") in {"start", "skip"}:
+            self.update_progress(message=message, stage="thumbnails")
+        self.add_log(message, level=level, stage="thumbnails")
+
+    def _cleanup_incomplete_artifacts(
+        self,
+        run_dir: Path | None,
+        cache_store: CacheStore | None,
+        *,
+        reason: str,
+    ) -> None:
+        cleanup = cleanup_incomplete_artifacts(
+            run_dir=run_dir or self.run_dir,
+            output_dir=self.output_dir,
+            cache_store=cache_store,
+        )
+        self.artifact_cleanup = cleanup
+        if reason == "cancelled":
+            self.cancel_cleanup = cleanup
+        deleted = list(cleanup.get("deleted_dirs") or [])
+        skipped = list(cleanup.get("skipped") or [])
+        errors = list(cleanup.get("errors") or [])
+        stage = "cancelled" if reason == "cancelled" else "failed"
+        action = "取消清理" if reason == "cancelled" else "失败清理"
+        if deleted:
+            self.add_log(f"已自动清理未完成任务目录与缓存：{', '.join(deleted)}", level="success", stage=stage)
+        if skipped:
+            self.add_log(f"{action}跳过：{'; '.join(skipped)}", level="warning", stage=stage)
+        if errors:
+            self.add_log(f"{action}失败：{'; '.join(errors)}", level="warning", stage=stage)
+
+
+def cleanup_incomplete_artifacts(
+    run_dir: Path | None,
+    output_dir: Path,
+    cache_store: CacheStore | None = None,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "run_dir": str(run_dir) if run_dir else "",
+        "deleted_dirs": [],
+        "skipped": [],
+        "errors": [],
+    }
+    if run_dir is None:
+        result["skipped"].append("尚未创建运行目录")
+        return result
+
+    resolved_run_dir = run_dir.resolve()
+    resolved_output_dir = output_dir.resolve()
+    result["run_dir"] = str(resolved_run_dir)
+    if not _is_cancel_run_dir_deletable(resolved_run_dir, resolved_output_dir):
+        result["skipped"].append(f"运行目录不符合自动清理规则：{resolved_run_dir}")
+        return result
+
+    cache_dirs = _cancel_cache_dirs(resolved_run_dir, cache_store)
+    for cache_dir in cache_dirs:
+        if not cache_dir.exists():
+            continue
+        if is_relative_to(cache_dir, resolved_run_dir):
+            continue
+        if not _is_cancel_cache_dir_deletable(cache_dir, resolved_run_dir, cache_store):
+            result["skipped"].append(f"缓存目录不符合自动清理规则：{cache_dir}")
+            continue
+        _delete_dir(cache_dir, result)
+
+    _delete_dir(resolved_run_dir, result)
+    return result
+
+
+def cleanup_cancelled_artifacts(
+    run_dir: Path | None,
+    output_dir: Path,
+    cache_store: CacheStore | None = None,
+) -> dict[str, Any]:
+    return cleanup_incomplete_artifacts(run_dir, output_dir, cache_store)
+
+
+def _is_cancel_run_dir_deletable(run_dir: Path, output_dir: Path) -> bool:
+    if not RUN_DIR_RE.match(run_dir.name):
+        return False
+    try:
+        if run_dir.parent.resolve() != output_dir.resolve():
+            return False
+    except OSError:
+        return False
+    manifest_path = run_dir / "manifest.json"
+    if manifest_path.exists():
+        try:
+            import json
+
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except Exception:
+            manifest = {}
+        status = str((manifest or {}).get("status") or "").strip().lower() if isinstance(manifest, dict) else ""
+        if status in {"completed", "reexported"}:
+            return False
+    return True
+
+
+def _cancel_cache_dirs(run_dir: Path, cache_store: CacheStore | None) -> list[Path]:
+    rows: list[Path] = []
+    if cache_store:
+        rows.extend([cache_store.cache_dir, cache_store.project_cache_dir, cache_store.legacy_cache_dir])
+    else:
+        store = CacheStore(run_dir)
+        rows.extend([store.cache_dir, store.project_cache_dir, store.legacy_cache_dir])
+    out: list[Path] = []
+    seen: set[str] = set()
+    for path in rows:
+        resolved = path.resolve()
+        key = str(resolved).casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(resolved)
+    return out
+
+
+def _is_cancel_cache_dir_deletable(cache_dir: Path, run_dir: Path, cache_store: CacheStore | None) -> bool:
+    if cache_dir.name != run_dir.name and cache_dir.name != "cache":
+        return False
+    if cache_dir.name == "cache":
+        return is_relative_to(cache_dir, run_dir)
+    cache_root = (cache_store.cache_root if cache_store else CacheStore(run_dir).cache_root).resolve()
+    return cache_dir.parent.resolve() == cache_root
+
+
+def _delete_dir(path: Path, result: dict[str, Any]) -> None:
+    if not path.exists():
+        return
+    if not path.is_dir():
+        result["skipped"].append(f"不是目录：{path}")
+        return
+    try:
+        shutil.rmtree(path, ignore_errors=False)
+        result["deleted_dirs"].append(str(path))
+    except OSError as err:
+        result["errors"].append(f"{path}: {type(err).__name__}: {err}")
 
 
 class JobManager:

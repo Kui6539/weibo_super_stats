@@ -42,11 +42,7 @@ window.WeiboCache = {
       controls.openResultDir.classList.remove("hidden");
       controls.openResultDir.disabled = false;
       renderResultList(result);
-      imagePreviewController?.setPages({
-        pages: result.image_report_pages || result.manifest?.files?.image_report_pages || [],
-        mdPath: result.md || result.manifest?.files?.markdown || "",
-        previewHtml: result.image_report_preview || result.manifest?.files?.image_report_preview || "",
-      });
+      syncImagePreview(result);
       if (result.run_dir) currentRunDir = result.run_dir;
       if (ui.reexportRunDir && result.run_dir && ui.reexportRunDir.value !== result.run_dir) {
         ui.reexportRunDir.value = result.run_dir;
@@ -73,6 +69,7 @@ window.WeiboCache = {
       const files = manifest.files || {};
       const warnings = result.warnings || manifest.warnings || [];
       const failedImageCount = Number(result.failed_image_count || manifest.failed_image_count || 0);
+      const imagePages = firstNonEmpty(files.image_report_pages, result.image_report_pages);
       const rows = [
         resultInfoRow("导出目录", result.run_dir || manifest.run_dir, true),
         resultFileRow("Markdown 文件", normalizeFileItem(files.markdown, "Markdown", result.md, "preview_markdown")),
@@ -83,13 +80,52 @@ window.WeiboCache = {
         resultFileRow("summary txt 文件", normalizeFileItem(files.summary, "summary txt", result.summary)),
         resultFileRow("微博正文 txt", normalizeFileItem(files.weibo_body, "微博正文 txt", result.weibo_body)),
         resultFileRow("长图预览 HTML", normalizeFileItem(files.image_report_preview, "长图预览 HTML", result.image_report_preview, "preview_image_report")),
-        ...arrayFileRows("长图 JPG", files.image_report_pages || result.image_report_pages),
+        ...imagePageRows("长图 JPG", imagePages),
         resultFileRow("长图 metadata", normalizeFileItem(files.image_report_metadata, "长图 metadata", result.image_report_metadata)),
         resultFileRow("images 图片目录", normalizeFileItem(files.images || files.images_dir, "images 图片目录", result.image_dir, "open_result_dir")),
         failedImageCount ? resultInfoRow("失败图片数量", `${failedImageCount} 张`, false) : "",
         ...warnings.map((warning) => resultInfoRow("警告", warning, false, "warning")),
       ].filter(Boolean);
       ui.resultList.innerHTML = rows.join("");
+    }
+
+    function syncImagePreview(result) {
+      const manifest = result?.manifest || {};
+      const files = manifest.files || {};
+      const runDir = firstNonEmpty(result?.run_dir, manifest.run_dir) || "";
+      imagePreviewController?.setPages({
+        pages: resolvePreviewPages(firstNonEmpty(result?.image_report_pages, files.image_report_pages), runDir),
+        mdPath: resolvePreviewPath(firstNonEmpty(result?.md, files.markdown), runDir),
+        previewHtml: resolvePreviewPath(firstNonEmpty(result?.image_report_preview, files.image_report_preview), runDir),
+      });
+    }
+
+    function resolvePreviewPages(value, runDir) {
+      if (!value) return [];
+      const rows = Array.isArray(value) ? value : [value];
+      return rows.map((item) => resolvePreviewPath(item, runDir)).filter(Boolean);
+    }
+
+    function resolvePreviewPath(value, runDir) {
+      const text = String(value || "").trim();
+      if (!text) return "";
+      if (/^(?:[a-zA-Z][a-zA-Z0-9+.-]*:|\/\/)/.test(text) || text.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(text)) {
+        return text;
+      }
+      const base = String(runDir || "").trim();
+      if (!base) return text;
+      return `${base.replace(/[\\/]+$/, "")}/${text.replace(/^[\\/]+/, "")}`;
+    }
+
+    function firstNonEmpty(...values) {
+      for (const value of values) {
+        if (Array.isArray(value)) {
+          if (value.length > 0) return value;
+          continue;
+        }
+        if (value) return value;
+      }
+      return null;
     }
 
     function arrayFileRows(label, value) {
@@ -101,18 +137,30 @@ window.WeiboCache = {
       });
     }
 
-    function normalizeFileItem(item, label, fallbackPath = "", action = "") {
-      if (!item && fallbackPath) return pathToFileItem(label, fallbackPath, action);
-      if (!item) return null;
-      if (typeof item === "string") return pathToFileItem(label, item, action);
-      if (item.path || item.relative_path || item.name) return { ...item, action: item.action || action };
-      return pathToFileItem(label, String(item), action);
+    function imagePageRows(label, value) {
+      if (!value) return [];
+      const rows = Array.isArray(value) ? value : [value];
+      return rows.map((item, index) => {
+        const rowLabel = rows.length > 1 ? `${label} ${index + 1}` : label;
+        return resultFileRow(
+          rowLabel,
+          normalizeFileItem(item, rowLabel, "", "preview_image_page", { previewIndex: index }),
+        );
+      });
     }
 
-    function pathToFileItem(label, path, action = "") {
+    function normalizeFileItem(item, label, fallbackPath = "", action = "", extra = {}) {
+      if (!item && fallbackPath) return pathToFileItem(label, fallbackPath, action, extra);
+      if (!item) return null;
+      if (typeof item === "string") return pathToFileItem(label, item, action, extra);
+      if (item.path || item.relative_path || item.name) return { ...item, ...extra, action: item.action || action };
+      return pathToFileItem(label, String(item), action, extra);
+    }
+
+    function pathToFileItem(label, path, action = "", extra = {}) {
       if (!path) return null;
       const name = String(path).split(/[\\/]/).filter(Boolean).pop() || String(path);
-      return { label, name, path: String(path), relative_path: String(path), exists: true, action };
+      return { label, name, path: String(path), relative_path: String(path), exists: true, action, ...extra };
     }
 
     function resultFileRow(label, item) {
@@ -125,7 +173,9 @@ window.WeiboCache = {
           ? `<button type="button" class="secondary small-button" data-preview-md="1">预览 Markdown</button>`
           : action === "preview_image_report"
             ? `<button type="button" class="secondary small-button" data-preview-image-report="1">预览长图</button>`
-            : "";
+            : action === "preview_image_page"
+              ? `<button type="button" class="secondary small-button" data-preview-image-page="${escapeAttr(String(item.previewIndex ?? 0))}">预览此张</button>`
+              : "";
       const openButton =
         action === "open_result_dir"
           ? `<button type="button" class="secondary small-button" data-open-result="1">打开导出目录</button>`
@@ -177,6 +227,12 @@ window.WeiboCache = {
       }
       if (event.target.closest("[data-preview-image-report]")) {
         imagePreviewController?.show();
+        window.dispatchEvent(new CustomEvent("weibo:preview-mode-change", { detail: { mode: "pic" } }));
+        return;
+      }
+      const imagePageButton = event.target.closest("[data-preview-image-page]");
+      if (imagePageButton) {
+        imagePreviewController?.showPage(imagePageButton.dataset.previewImagePage || 0);
         window.dispatchEvent(new CustomEvent("weibo:preview-mode-change", { detail: { mode: "pic" } }));
       }
     }
@@ -245,6 +301,7 @@ window.WeiboCache = {
         showToast(data.message || "重新生成完成。", "success");
         if (data.result) {
           renderResultList(data.result);
+          syncImagePreview(data.result);
           if (data.result.run_dir) ui.reexportRunDir.value = data.result.run_dir;
         }
         await checkCacheStatus({ silent: true });

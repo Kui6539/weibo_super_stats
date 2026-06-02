@@ -2,18 +2,23 @@ window.WeiboPreflight = {
   createController({ ui, controls, readForm, escapeHtml, escapeAttr }) {
     const PREFLIGHT_SESSION_KEY = "weibo_preflight_session_v2";
     const LEGACY_PREFLIGHT_STORAGE_KEY = "weibo_preflight_cache_v1";
+    const AUTO_COLLAPSE_DELAY = 2000;
+    const COLLAPSE_ANIMATION_MS = 280;
 
     let preflightPendingPayload = null;
     let preflightCollapseTimer = null;
+    let preflightCollapseFinishTimer = null;
+    let preflightCollapsePromise = null;
+    let preflightCollapseResolve = null;
     let lastPreflight = null;
 
     function renderInline(preflight, options = {}) {
       const checks = preflight.checks || [];
       const { collapsed = false, restore = false } = options;
-      clearTimeout(preflightCollapseTimer);
+      clearCollapseTimers({ resolve: true });
       if (!checks.length) {
         resetInline();
-        return;
+        return Promise.resolve();
       }
       const wasHidden = ui.preflightPanel.classList.contains("hidden");
       ui.preflightPanel.classList.remove("hidden");
@@ -25,15 +30,13 @@ window.WeiboPreflight = {
         playEnterAnimation();
       }
       if (!restore) {
-        preflightCollapseTimer = window.setTimeout(() => {
-          setCollapsed(true);
-        }, 2000);
+        return scheduleAutoCollapse();
       }
+      return waitForInlineCollapse();
     }
 
     function resetInline() {
-      clearTimeout(preflightCollapseTimer);
-      preflightCollapseTimer = null;
+      clearCollapseTimers({ resolve: true });
       lastPreflight = null;
       ui.preflightPanel.classList.add("hidden");
       ui.preflightPanel.classList.remove("collapsed");
@@ -48,6 +51,7 @@ window.WeiboPreflight = {
     }
 
     function setCollapsed(collapsed) {
+      const wasCollapsed = ui.preflightPanel.classList.contains("collapsed");
       const isCollapsed = Boolean(collapsed);
       ui.preflightPanel.classList.toggle("collapsed", isCollapsed);
       ui.preflightPanel.setAttribute("aria-expanded", isCollapsed ? "false" : "true");
@@ -56,6 +60,65 @@ window.WeiboPreflight = {
         controls.preflightToggle.setAttribute("aria-expanded", isCollapsed ? "false" : "true");
       }
       persistCache(isCollapsed);
+      if (isCollapsed) {
+        if (wasCollapsed) {
+          resolvePendingCollapse();
+        } else {
+          resolveCollapseAfterAnimation();
+        }
+      }
+    }
+
+    function scheduleAutoCollapse(delay = AUTO_COLLAPSE_DELAY) {
+      clearCollapseTimers({ resolve: false });
+      preflightCollapsePromise = new Promise((resolve) => {
+        preflightCollapseResolve = resolve;
+        preflightCollapseTimer = window.setTimeout(() => {
+          preflightCollapseTimer = null;
+          setCollapsed(true);
+        }, delay);
+      });
+      return preflightCollapsePromise;
+    }
+
+    function waitForInlineCollapse() {
+      if (ui.preflightPanel.classList.contains("hidden") || ui.preflightPanel.classList.contains("collapsed")) {
+        return Promise.resolve();
+      }
+      return preflightCollapsePromise || scheduleAutoCollapse(0);
+    }
+
+    function clearCollapseTimers({ resolve = false } = {}) {
+      if (preflightCollapseTimer) {
+        clearTimeout(preflightCollapseTimer);
+        preflightCollapseTimer = null;
+      }
+      if (preflightCollapseFinishTimer) {
+        clearTimeout(preflightCollapseFinishTimer);
+        preflightCollapseFinishTimer = null;
+      }
+      if (resolve) {
+        resolvePendingCollapse();
+      }
+    }
+
+    function resolveCollapseAfterAnimation() {
+      if (!preflightCollapseResolve) return;
+      if (preflightCollapseFinishTimer) {
+        clearTimeout(preflightCollapseFinishTimer);
+      }
+      preflightCollapseFinishTimer = window.setTimeout(() => {
+        preflightCollapseFinishTimer = null;
+        resolvePendingCollapse();
+      }, COLLAPSE_ANIMATION_MS);
+    }
+
+    function resolvePendingCollapse() {
+      if (!preflightCollapseResolve) return;
+      const resolve = preflightCollapseResolve;
+      preflightCollapseResolve = null;
+      preflightCollapsePromise = null;
+      resolve();
     }
 
     function playEnterAnimation() {
@@ -186,6 +249,7 @@ window.WeiboPreflight = {
       renderInline,
       resetInline,
       setCollapsed,
+      waitForInlineCollapse,
       restoreCache,
       clearLegacyCache,
       showModal,

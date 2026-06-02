@@ -77,11 +77,19 @@ window.WeiboCandidates = {
       const content = cleanCandidateText(rawContent);
       const imageCount = Number(item.image_count || 0);
       const previewPaths = Array.isArray(item.image_preview_paths) ? item.image_preview_paths : [];
-      const previews = previewPaths
+      const previewUrls = previewPaths
         .map(candidatePreviewUrl)
-        .filter(Boolean)
+        .filter(Boolean);
+      const previews = previewUrls
         .map((src) => `<img src="${escapeAttr(src)}" alt="候选图片预览" loading="lazy" />`)
         .join("");
+      const remainingImageCount = Math.max(0, imageCount - previewUrls.length);
+      const imageMoreHint = remainingImageCount
+        ? `<span class="candidate-image-more">另有 ${escapeHtml(remainingImageCount)} 张图</span>`
+        : "";
+      const imageUnavailableHint = !previews && imageCount
+        ? `<div class="candidate-image-note">原帖有 ${escapeHtml(imageCount)} 张图，缩略图暂不可用</div>`
+        : "";
       const postButton = item.post_url
         ? `<a class="candidate-link" href="${escapeAttr(item.post_url)}" target="_blank" rel="noreferrer">原帖链接</a>`
         : `<span class="candidate-link disabled">无原帖链接</span>`;
@@ -105,7 +113,7 @@ window.WeiboCandidates = {
           ${imageCount ? `<span>图片 ${imageCount} 张</span>` : ""}
         </div>
         <div class="candidate-content ${expanded ? "expanded" : ""}">${escapeHtml(content)}</div>
-        ${previews ? `<div class="candidate-previews">${previews}</div>` : ""}
+        ${previews ? `<div class="candidate-previews">${previews}${imageMoreHint}</div>` : imageUnavailableHint}
         <div class="candidate-card-actions">
           ${postButton}
           <button type="button" class="secondary small-button" data-toggle-full="${index}">

@@ -22,6 +22,27 @@ class CommentsAnalyzerTests(unittest.TestCase):
         self.assertEqual(result["non_author_comments"], 1)
         self.assertEqual(result["top_comments"][0]["like_counts"], 2)
 
+    def test_nested_comments_keep_counts_and_top_comment(self) -> None:
+        comments = [
+            {
+                "id": "root",
+                "user_id": "u2",
+                "user_name": "读者",
+                "text": "普通评论",
+                "like_counts": 1,
+                "comments": [
+                    {"id": "reply1", "user_id": "u3", "user_name": "读者B", "text": "回复", "like_counts": 9},
+                    {"id": "reply2", "user_id": "u1", "user_name": "作者", "text": "楼主回复", "like_counts": 2},
+                ],
+            }
+        ]
+        self.assertEqual(count_author_replies(comments, author_id="u1", author_name="作者"), 1)
+        self.assertEqual(count_non_author_comments(comments, author_id="u1", author_name="作者"), 2)
+        summary = build_comment_summary(comments)
+        self.assertEqual(summary["comment_count"], 3)
+        self.assertEqual(summary["comment_likes_total"], 12)
+        self.assertEqual(summary["top_comments"][0]["id"], "reply1")
+
     def test_empty_summary(self) -> None:
         self.assertEqual(build_comment_summary([])["comment_count"], 0)
 

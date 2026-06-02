@@ -23,6 +23,7 @@ const controls = {
   start: $("startBtn"),
   cancelJob: $("cancelJobBtn"),
   edgeDebug: $("edgeDebugBtn"),
+  clearCdpCache: $("clearCdpCacheBtn"),
   autoCookie: $("autoCookieBtn"),
   cookieBrowserEdge: $("cookieBrowserEdgeBtn"),
   cookieBrowserChrome: $("cookieBrowserChromeBtn"),
@@ -90,6 +91,7 @@ const ui = {
   jobMeta: $("jobMeta"),
   monitorPanel: $("monitorPanel"),
   logBox: $("logBox"),
+  progressToggle: $("progressToggleBtn"),
   logPanel: $("logPanel"),
   backendLogBox: $("backendLogBox"),
   logCount: $("logCount"),
@@ -408,7 +410,7 @@ function showToast(message, state = "success") {
 }
 
 function renderPreflightInline(preflight, options = {}) {
-  preflightController.renderInline(preflight, options);
+  return preflightController.renderInline(preflight, options);
 }
 
 function resetPreflightInline() {

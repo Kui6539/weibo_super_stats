@@ -93,7 +93,7 @@ rg --files
 
 - `app.py`：CLI 入口。解析 `--host`、`--port`、`--no-browser`，调用 `server.http_server.create_server()`，启动本地 HTTP server，必要时打开浏览器。
 - `crawler.py`：微博抓取兼容层和调度层。仍保留真实微博请求、超话翻页、旧版 FM.view 和新版超话 API 切换、长正文补全、评论请求、图片下载调度、旧函数名兼容转发。
-- `cookie_helper.py`：Cookie 获取兼容入口。封装 Edge/Chrome 调试浏览器、CDP WebSocket、本地浏览器 Cookie store、`browser-cookie3` 回退逻辑。
+- `cookie_helper.py`：Cookie 获取兼容入口。封装 Edge/Chrome 调试浏览器、CDP WebSocket、本地浏览器 Cookie store、CDP profile 清理、`browser-cookie3` 回退逻辑。
 - `requirements.txt`：运行依赖，包括 `requests`、`beautifulsoup4`、`lxml`、`browser-cookie3`、`openpyxl`、`pillow`、`python-docx`、`playwright`。
 - `点我启动.bat`：普通用户双击启动入口。
 - `weibo_stats_config.json`：本地配置，可能包含 Cookie。不要提交。
@@ -213,6 +213,7 @@ rg --files
 ### `modules/images/`
 
 - `collect.py`：从帖子和热评中收集图片项。
+- `candidate_thumbnails.py`：为人工筛选候选帖下载最多 3 张缩略图，写入 `cache/<run_id>/candidate_thumbnails/`。
 - `downloader.py`：单图下载、单帖下载、入选帖子批量下载。
 - `manifest.py`：图片 manifest 构造、读写。
 - `paths.py`：图片目录名、文件名、安全路径片段。
@@ -349,6 +350,7 @@ rg --files
 | `/api/status` | `handle_status` | 当前任务快照，前端轮询核心接口 | 无 |
 | `/api/report-preview` | `handle_report_preview` | 当前或指定 Markdown 预览 | `md_path` 可选 |
 | `/api/report-asset` | `handle_report_asset` | 当前报告中图片资产 | `path`，`md_path` 可选 |
+| `/api/candidate-thumbnail` | `handle_candidate_thumbnail` | 读取候选帖缩略图 | `run_id`、`path` |
 | `/api/history/asset` | `handle_history_asset` | 历史报告图片资产 | `run_id`、`path` |
 | `/api/help-doc` | `handle_help_doc` | Cookie 教程 Markdown | 无 |
 | `/Background.png` | special case | 背景图 | 无 |
@@ -384,6 +386,7 @@ rg --files
 | `/api/output/cleanup` | `handle_output_cleanup` | 确认清理 | 清理规则 + `confirm: true` |
 | `/api/cookie/auto` | `handle_cookie_auto` | 自动读取 Cookie | `browser: "edge" | "chrome"` |
 | `/api/cookie/edge-debug` | `handle_cookie_edge_debug` | 打开调试浏览器 | `browser: "edge" | "chrome"` |
+| `/api/cookie/clear-cdp-cache` | `handle_cookie_clear_cdp_cache` | 清理工具内置 CDP profile | `{}` |
 | `/api/cookie/extract` | `handle_cookie_extract` | 从文本提取 Cookie | `text` |
 | `/api/open-result-dir` | `handle_open_result_dir` | 打开结果目录 | `run_dir?` |
 
@@ -544,6 +547,7 @@ rg --files
 - `crawl`
 - `hydrate`
 - `score`
+- `thumbnails`
 - `selection`
 - `images`
 - `export`
@@ -576,7 +580,7 @@ rg --files
 - `reposts`
 - `post_url`
 - `image_count`
-- `image_preview_paths`
+- `image_preview_paths`：优先为 `/api/candidate-thumbnail` 可读取的缩略图 URL，最多 3 个。
 
 前端提交 `/api/select` 时发送的是 candidate `index`，不是 post_id。
 
@@ -594,6 +598,7 @@ cache/<run_id>/selected_posts.json
 cache/<run_id>/community_stats.json
 cache/<run_id>/images_manifest.json
 cache/<run_id>/comments/post_<post_id>.json
+cache/<run_id>/candidate_thumbnails/*.jpg
 ```
 
 `CacheStore.STAGE_FILES` 决定 stage 到文件的映射。写入时使用 `CacheStore.write_stage()`。
@@ -674,20 +679,21 @@ reexport 最低要求：
 4. 抓取超话分页，旧版 FM.view 不可用时切换新版超话 API。
 5. 补全文本、请求评论、分析评论、评分，期间写阶段缓存。
 6. `score`：计算活跃时段，选择候选。
-7. `selection`：序列化候选，状态变为 `awaiting_selection`，等待 `/api/select`。
-8. 用户提交选择后，状态变为 `exporting`，阶段进入 `images`。
-9. 下载帖子图片和热评图片。
-10. 写根缓存中的 `images_manifest.json` 和更新 `selected_posts`。
-11. `export`：生成 XLSX、CSV、summary、DOCX、Markdown、微博正文、长图报告。
-12. 写 `manifest.json`。
-13. 写历史索引。
-14. 状态变为 `completed`。
+7. `thumbnails`：为 20 条预选帖下载最多 3 张缩略图，写入 `cache/<run_id>/candidate_thumbnails/`。
+8. `selection`：序列化候选，状态变为 `awaiting_selection`，等待 `/api/select`。
+9. 用户提交选择后，状态变为 `exporting`，阶段进入 `images`。
+10. 下载帖子图片和热评图片。
+11. 写根缓存中的 `images_manifest.json` 和更新 `selected_posts`。
+12. `export`：生成 XLSX、CSV、summary、DOCX、Markdown、微博正文、长图报告。
+13. 写 `manifest.json`。
+14. 写历史索引。
+15. 状态变为 `completed`。
 
 失败路径：
 
-- `JobCancelled` -> `cancelled`
-- `CrawlError` -> `failed`
-- 其他异常 -> `failed`，错误文本中包含异常类型
+- `JobCancelled` -> 自动清理未完成 output/cache -> `cancelled`
+- `CrawlError` -> 自动清理未完成 output/cache -> `failed`
+- 其他异常 -> 自动清理未完成 output/cache -> `failed`，错误文本中包含异常类型
 
 ## 输出目录结构
 

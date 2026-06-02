@@ -6,15 +6,23 @@ from typing import Any
 
 def build_comment_leaderboards(posts: Iterable[dict[str, Any]], top_n: int = 3) -> dict[str, Any]:
     rows = list(posts)
+    stats = _collect_user_stats(rows)
     return {
-        "comment_count_top3": build_comment_count_ranking(rows, top_n=top_n),
-        "comment_quality_top3": build_comment_quality_ranking(rows, top_n=top_n),
-        "all_stats": _all_user_stats(rows),
+        "comment_count_top3": _build_comment_count_ranking_from_stats(stats, top_n=top_n),
+        "comment_quality_top3": _build_comment_quality_ranking_from_stats(stats, top_n=top_n),
+        "all_stats": _all_user_stats_from_stats(stats),
     }
 
 
 def build_comment_count_ranking(posts: Iterable[dict[str, Any]], top_n: int = 3) -> list[dict[str, Any]]:
     stats = _collect_user_stats(posts)
+    return _build_comment_count_ranking_from_stats(stats, top_n=top_n)
+
+
+def _build_comment_count_ranking_from_stats(
+    stats: dict[str, dict[str, Any]],
+    top_n: int = 3,
+) -> list[dict[str, Any]]:
     sorted_rows = sorted(
         stats.values(),
         key=lambda item: (
@@ -31,6 +39,13 @@ def build_comment_count_ranking(posts: Iterable[dict[str, Any]], top_n: int = 3)
 
 def build_comment_quality_ranking(posts: Iterable[dict[str, Any]], top_n: int = 3) -> list[dict[str, Any]]:
     stats = _collect_user_stats(posts)
+    return _build_comment_quality_ranking_from_stats(stats, top_n=top_n)
+
+
+def _build_comment_quality_ranking_from_stats(
+    stats: dict[str, dict[str, Any]],
+    top_n: int = 3,
+) -> list[dict[str, Any]]:
     sorted_rows = sorted(
         stats.values(),
         key=lambda item: (
@@ -77,7 +92,7 @@ def _collect_user_stats(posts: Iterable[dict[str, Any]]) -> dict[str, dict[str, 
             continue
         post_id = _clean_name(str(post.get("post_id", "") or ""))
         post_key = post_id or f"{_clean_name(str(post.get('post_url', '') or ''))}|{_clean_name(str(post.get('publish_time', '') or ''))}"
-        for comment in list(post.get("all_comments_data") or []):
+        for comment in post.get("all_comments_data") or []:
             if not isinstance(comment, dict):
                 continue
             item = ensure_user(str(comment.get("user_name", "") or "匿名用户"))
@@ -116,7 +131,11 @@ def _collect_user_stats(posts: Iterable[dict[str, Any]]) -> dict[str, dict[str, 
 
 
 def _all_user_stats(posts: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [_strip_internal(item) for item in _collect_user_stats(posts).values()]
+    return _all_user_stats_from_stats(_collect_user_stats(posts))
+
+
+def _all_user_stats_from_stats(stats: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    return [_strip_internal(item) for item in stats.values()]
 
 
 def _with_rank(rows: list[dict[str, Any]], top_n: int) -> list[dict[str, Any]]:

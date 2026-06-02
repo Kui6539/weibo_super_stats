@@ -29,6 +29,28 @@ window.WeiboCookie = {
       }
     }
 
+    async function clearCdpCache() {
+      setBusy(controls.clearCdpCache, true, "正在清理");
+      try {
+        const data = await api("/api/cookie/clear-cdp-cache", {
+          method: "POST",
+          body: "{}",
+        });
+        const deleted = Array.isArray(data.deleted) ? data.deleted : [];
+        const closed = Array.isArray(data.closed_browsers) ? data.closed_browsers : [];
+        const closedHint = closed.length ? `，已关闭调试 ${closed.join("、")}` : "";
+        if (deleted.length) {
+          showToast(`已清除 ${deleted.length} 个 CDP 调试缓存${closedHint}。`, "info");
+        } else {
+          showToast(`没有找到可清除的 CDP 调试缓存${closedHint}。`, "info");
+        }
+      } catch (err) {
+        appendClientLog(err.message);
+      } finally {
+        setBusy(controls.clearCdpCache, false);
+      }
+    }
+
     async function autoCookie() {
       setBusy(controls.autoCookie, true, "正在读取");
       try {
@@ -213,6 +235,7 @@ window.WeiboCookie = {
 
     return {
       launchEdgeDebug,
+      clearCdpCache,
       autoCookie,
       readClipboard,
       extractCookie,

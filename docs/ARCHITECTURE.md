@@ -44,11 +44,16 @@ WebUI -> HTTP API -> CrawlJob -> crawler -> cache -> export -> manifest
 - `/api/output/cleanup`
 - `/api/report-preview`
 - `/api/open-result-dir`
+- `/api/cookie/auto`
+- `/api/cookie/edge-debug`
+- `/api/cookie/clear-cdp-cache`
+- `/api/cookie/extract`
+- `/api/candidate-thumbnail`
 
 ## core/
 
 - `core/config.py`：配置读写、迁移、预检查参数构造。
-- `core/job.py`：任务状态、结构化事件、人工筛选等待、取消信号。
+- `core/job.py`：任务状态、结构化事件、缩略图阶段、人工筛选等待、取消信号、失败/取消自动清理。
 - `core/events.py`：`JobEvent`、阶段标签、事件脱敏。
 - `core/cache.py`：项目根 `cache/<run_id>/` 读写、旧版运行目录 cache 兼容、缓存状态、manifest 读写辅助。
 - `core/paths.py`：路径安全、导出目录处理。
@@ -74,7 +79,7 @@ WebUI -> HTTP API -> CrawlJob -> crawler -> cache -> export -> manifest
 - `modules/weibo_emoticons.py`：微博表情 token 提取、共享表情资源准备。
 - `modules/weibo_html_parser.py`：外层原帖 HTML 解析。
 - `modules/comments/`：评论解析、分析、榜单。
-- `modules/images/`：图片收集、路径、下载、manifest、URL 提取。
+- `modules/images/`：图片收集、路径、下载、候选缩略图、manifest、URL 提取。
 
 ## export/
 
@@ -119,12 +124,25 @@ WebUI 使用静态 HTML/CSS/JS：
 
 仍暂留在 `crawler.py` 的逻辑多与真实微博请求、线程池调度、缓存写入时机和任务流程耦合，后续应继续小步迁移。
 
+## 主任务阶段
+
+`core/events.py` 中的阶段顺序为：
+
+```text
+init -> crawl -> hydrate -> score -> thumbnails -> selection -> images -> export -> completed
+```
+
+- `thumbnails` 位于评分之后、人工筛选之前，用于为 20 条预选帖缓存最多 3 张缩略图。
+- 前端任务状态默认先展示完整阶段列表，随后收起为当前进行中的阶段；开始任务时会先展示预检查结果，再展开任务状态。
+- 取消或失败会进入清理路径，自动删除尚未完成的 output 运行目录和对应根缓存目录。
+
 ## cookie_helper.py 当前定位
 
 `cookie_helper.py` 仍作为兼容入口，底层能力逐步拆到 `modules/cookie_*`：
 
 - Cookie 文本解析。
 - Edge / Chrome 调试浏览器读取。
+- CDP 调试 profile 清理。
 - 浏览器本地 Cookie 存储读取。
 - Cookie 可用性检测。
 
@@ -142,10 +160,13 @@ cache/<run_id>/selected_posts.json
 cache/<run_id>/community_stats.json
 cache/<run_id>/images_manifest.json
 cache/<run_id>/comments/
+cache/<run_id>/candidate_thumbnails/
 manifest.json
 ```
 
 旧版本保存在 `output/<run_id>/cache/` 的缓存仍会被 `CacheStore` 识别。`cache/` 和 `manifest.json` 不应保存登录凭据或会话字段。
+
+取消或失败的未完成任务会自动删除 `output/<run_id>/` 与对应 `cache/<run_id>/`，仅限符合时间戳命名规则且位于安全根目录下的运行目录。
 
 微博表情资源是工具级共享资源，不跟随单次运行复制：
 

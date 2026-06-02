@@ -9,6 +9,7 @@ import shutil
 import socket
 import subprocess
 import tempfile
+import time
 from contextlib import suppress
 from pathlib import Path
 from urllib.parse import urlparse
@@ -35,6 +36,8 @@ WEIBO_COOKIE_URLS = (
 __all__ = [
     "CookieFetchError",
     "browser_display_name",
+    "cdp_profile_dirs",
+    "clear_cdp_debug_cache",
     "close_debug_browser",
     "close_edge_debug_browser",
     "extract_cookie_from_text",
@@ -60,6 +63,57 @@ def normalize_browser_name(browser: str | None) -> str:
 
 def browser_display_name(browser: str | None) -> str:
     return str(CDP_BROWSER_DEFAULTS[normalize_browser_name(browser)]["label"])
+
+
+def cdp_profile_dirs(root_dir: Path | None = None) -> dict[str, Path]:
+    root = (root_dir or Path(__file__).resolve().parent).resolve()
+    return {
+        browser: root / str(defaults["profile_dir"])
+        for browser, defaults in CDP_BROWSER_DEFAULTS.items()
+    }
+
+
+def clear_cdp_debug_cache(root_dir: Path | None = None, close_browsers: bool = True) -> dict[str, object]:
+    root = (root_dir or Path(__file__).resolve().parent).resolve()
+    profile_dirs = cdp_profile_dirs(root)
+    closed_browsers: list[str] = []
+    deleted: list[dict[str, str]] = []
+    missing: list[dict[str, str]] = []
+    errors: list[dict[str, str]] = []
+
+    if close_browsers:
+        for browser in profile_dirs:
+            if close_debug_browser(browser):
+                closed_browsers.append(browser_display_name(browser))
+        if closed_browsers:
+            time.sleep(0.6)
+
+    for browser, profile_dir in profile_dirs.items():
+        label = browser_display_name(browser)
+        expected_name = str(CDP_BROWSER_DEFAULTS[browser]["profile_dir"])
+        target = profile_dir.resolve()
+        item = {"browser": label, "path": str(target)}
+        if target.parent != root or target.name != expected_name:
+            errors.append({**item, "error": "拒绝删除非固定 CDP profile 目录"})
+            continue
+        if not target.exists():
+            missing.append(item)
+            continue
+        if not target.is_dir():
+            errors.append({**item, "error": "目标不是文件夹"})
+            continue
+        remove_error = _remove_profile_dir_with_retry(target)
+        if remove_error:
+            errors.append({**item, "error": str(remove_error)})
+        else:
+            deleted.append(item)
+
+    return {
+        "deleted": deleted,
+        "missing": missing,
+        "errors": errors,
+        "closed_browsers": closed_browsers,
+    }
 
 
 def get_weibo_cookie_header(browser: str | None = None) -> str:
@@ -154,7 +208,7 @@ def launch_debug_browser(browser: str | None = None, profile_dir: Path | None = 
     if not browser_exe:
         raise CookieFetchError(f"未找到 {browser_label}，可切换其他浏览器或改用手动粘贴 Cookie。")
 
-    profile_path = profile_dir or (Path.cwd() / str(CDP_BROWSER_DEFAULTS[browser_key]["profile_dir"]))
+    profile_path = profile_dir or cdp_profile_dirs()[browser_key]
     profile_path.mkdir(parents=True, exist_ok=True)
     debug_port = int(port or CDP_BROWSER_DEFAULTS[browser_key]["port"])
     endpoint = f"http://127.0.0.1:{debug_port}"
@@ -196,6 +250,21 @@ def close_debug_browser(browser: str | None = None) -> bool:
 
 def close_edge_debug_browser() -> bool:
     return close_debug_browser("edge")
+
+
+def _remove_profile_dir_with_retry(path: Path) -> Exception | None:
+    last_error: Exception | None = None
+    for attempt in range(4):
+        try:
+            shutil.rmtree(path)
+            return None
+        except FileNotFoundError:
+            return None
+        except Exception as exc:
+            last_error = exc
+            if attempt < 3:
+                time.sleep(0.35)
+    return last_error
 
 
 def _browser_loaders(browser_cookie3_module, browser: str) -> list[tuple[str, object]]:

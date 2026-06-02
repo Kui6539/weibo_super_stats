@@ -39,6 +39,7 @@ window.WeiboEvents = {
     controls.cookieBrowserEdge?.addEventListener("click", () => cookieController.setBrowser("edge"));
     controls.cookieBrowserChrome?.addEventListener("click", () => cookieController.setBrowser("chrome"));
     controls.edgeDebug.addEventListener("click", () => cookieController.launchEdgeDebug());
+    controls.clearCdpCache?.addEventListener("click", () => cookieController.clearCdpCache());
     controls.autoCookie.addEventListener("click", () => cookieController.autoCookie());
     controls.clipboard.addEventListener("click", () => cookieController.readClipboard());
     controls.extractCookie.addEventListener("click", () => cookieController.extractCookie());
@@ -208,8 +209,9 @@ window.WeiboEvents = {
     controls.preflightProceed.addEventListener("click", () => {
       const payload = preflightController.pendingPayload();
       if (!payload || controls.preflightProceed.disabled) return;
+      const revealAfter = preflightController.waitForInlineCollapse();
       preflightController.closeModal();
-      taskController.startJobAfterPreflight(payload);
+      taskController.startJobAfterPreflight(payload, { revealAfter });
     });
     ui.preflightPanel.addEventListener("click", () => {
       if (!ui.preflightPanel.classList.contains("collapsed")) return;

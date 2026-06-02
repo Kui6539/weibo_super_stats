@@ -44,11 +44,11 @@ def build_recovery_suggestions(error: Any, job: Any = None, manifest: dict[str, 
         ],
         "file_locked": [
             ("关闭占用文件", "关闭正在打开的 Word 或 Excel 文件后重新生成报告。"),
-            ("从缓存重新生成", "如果抓取已完成，可以从 cache 离线重新生成报告。"),
+            ("重新运行任务", "失败后的未完成目录和缓存会自动清理，关闭占用文件后请重新开始。"),
         ],
         "cache": [
-            ("检查缓存完整性", "使用“检查缓存”确认 selected_posts 和 posts_scored 是否存在。"),
-            ("重新执行完整任务", "缓存不完整时，需要重新完成抓取和人工筛选。"),
+            ("重新执行完整任务", "失败后的未完成缓存会自动清理，需要重新完成抓取和人工筛选。"),
+            ("检查任务日志", "确认是哪一步写入或读取缓存失败，再修正路径或权限后重试。"),
         ],
         "images": [
             ("继续文本导出", "少量图片失败不会影响 Markdown、CSV、summary 等文本报告。"),
@@ -56,7 +56,7 @@ def build_recovery_suggestions(error: Any, job: Any = None, manifest: dict[str, 
         ],
         "unknown": [
             ("查看任务日志", "检查终端与任务日志中的最近错误，确认失败阶段。"),
-            ("保留输出目录", "不要删除 output 中的运行目录，便于从已有 cache 恢复。"),
+            ("重新开始任务", "失败后的未完成目录和缓存会自动清理，可修正问题后重新运行。"),
         ],
     }
     rows = [{"title": title, "message": message} for title, message in suggestions[category]]
@@ -72,9 +72,11 @@ def recovery_suggestions_for_status(job_status: dict[str, Any] | None) -> list[d
         return []
     status = str(job_status.get("status") or "")
     if status == "failed":
-        return build_recovery_suggestions(job_status.get("error") or job_status.get("progress", {}).get("message") or "")
+        rows = build_recovery_suggestions(job_status.get("error") or job_status.get("progress", {}).get("message") or "")
+        rows.append({"title": "自动清理", "message": "未完成的任务目录和对应缓存会自动清理；如果日志显示清理失败，请关闭占用文件后手动处理。"})
+        return rows
     if status == "cancelled":
-        return [{"title": "任务已取消", "message": "已生成的 cache 和临时文件会保留，可检查 output 目录后决定是否重新开始。"}]
+        return [{"title": "任务已取消", "message": "未完成的任务目录和对应缓存已自动清理，可直接重新开始。"}]
     return []
 
 

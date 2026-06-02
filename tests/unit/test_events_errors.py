@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 
 from core.errors import ConfigError, to_error_response
-from core.events import clamp_percent, make_event, normalize_stage, sanitize_event_payload
+from core.events import STAGE_ORDER, clamp_percent, make_event, normalize_stage, sanitize_event_payload
 
 
 class EventsErrorsTests(unittest.TestCase):
@@ -23,9 +23,12 @@ class EventsErrorsTests(unittest.TestCase):
 
     def test_stage_and_percent_normalization(self) -> None:
         self.assertEqual(normalize_stage("crawl"), "crawl")
+        self.assertEqual(normalize_stage("thumbnails"), "thumbnails")
         self.assertEqual(normalize_stage("unknown"), "idle")
         self.assertEqual(clamp_percent(-1), 0.0)
         self.assertEqual(clamp_percent(101), 100.0)
+        self.assertLess(STAGE_ORDER.index("score"), STAGE_ORDER.index("thumbnails"))
+        self.assertLess(STAGE_ORDER.index("thumbnails"), STAGE_ORDER.index("selection"))
 
     def test_error_response_shape(self) -> None:
         payload = to_error_response(ConfigError("配置读取失败", "请检查配置文件权限"))

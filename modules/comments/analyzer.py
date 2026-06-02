@@ -9,16 +9,24 @@ def analyze_post_comments(post: dict[str, Any], comments_data: Any) -> dict[str,
     comments = extract_comment_items(comments_data)
     author_id = str(post.get("user_id") or post.get("author_id") or "")
     author_name = str(post.get("user_name") or "")
-    author_replies = count_author_replies(comments, author_id=author_id, author_name=author_name)
-    non_author_comments = count_non_author_comments(comments, author_id=author_id, author_name=author_name)
-    summary = build_comment_summary(comments)
+    rows = _walk_comments(comments)
+    author_replies = 0
+    non_author_comments = 0
+    comment_likes_total = 0
+    for row in rows:
+        if _is_author(row, author_id, author_name):
+            author_replies += 1
+        else:
+            non_author_comments += 1
+        comment_likes_total += int(row.get("like_counts") or 0)
+    top_comments = sorted(rows, key=lambda row: int(row.get("like_counts") or 0), reverse=True)[:3]
     return {
         "author_replies": author_replies,
         "non_author_comments": non_author_comments,
-        "top_comments": summary["top_comments"],
+        "top_comments": top_comments,
         "all_comments": comments,
-        "comment_count": summary["comment_count"],
-        "comment_likes_total": summary["comment_likes_total"],
+        "comment_count": len(rows),
+        "comment_likes_total": comment_likes_total,
     }
 
 
@@ -43,7 +51,7 @@ def count_non_author_comments(
 
 
 def build_comment_summary(comments: list[dict[str, Any]]) -> dict[str, Any]:
-    rows = list(_walk_comments(comments))
+    rows = _walk_comments(comments)
     top_comments = sorted(rows, key=lambda row: int(row.get("like_counts") or 0), reverse=True)[:3]
     return {
         "comment_count": len(rows),
@@ -54,13 +62,15 @@ def build_comment_summary(comments: list[dict[str, Any]]) -> dict[str, Any]:
 
 def _walk_comments(comments: list[dict[str, Any]]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    for comment in comments:
+    pending = list(reversed(comments))
+    while pending:
+        comment = pending.pop()
         if not isinstance(comment, dict):
             continue
         rows.append(comment)
         replies = comment.get("comments")
         if isinstance(replies, list):
-            rows.extend(_walk_comments([reply for reply in replies if isinstance(reply, dict)]))
+            pending.extend(reply for reply in reversed(replies) if isinstance(reply, dict))
     return rows
 
 

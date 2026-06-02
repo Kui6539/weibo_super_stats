@@ -60,7 +60,9 @@ scripts\smoke_test.bat
 - 导出器不得访问网络。
 - 离线重新生成报告不得触发抓取、评论请求或图片下载。
 - 新任务缓存默认写入项目根目录 `cache/<run_id>/`；旧版 `output/<run_id>/cache/` 仅作为兼容读取路径。
+- 取消或失败任务会自动清理未完成的 output 运行目录和对应根缓存；清理逻辑必须限制在安全根目录和时间戳运行目录内。
 - 微博表情资源默认写入项目根目录 `assets/weibo_emoticons/`；如需隔离可设置 `WEIBO_STATS_EMOTICON_DIR`。
+- 候选缩略图写入 `cache/<run_id>/candidate_thumbnails/`，只服务人工筛选 UI，不应写入最终 output。
 
 ## 新增导出器
 
@@ -89,6 +91,7 @@ scripts\smoke_test.bat
 
 4. 不向前端返回 Python traceback。
 5. 不返回完整敏感字段。
+6. 删除类接口必须限制固定路径或安全根目录，例如 CDP 缓存清理只允许删除 `.edge_cdp_profile/` 和 `.chrome_cdp_profile/`。
 
 ## 新增 WebUI 模块
 
@@ -108,6 +111,7 @@ WebUI 使用原生 JS 模块化文件：
 - `web/js/presets.js`：配置预设选择、保存、复制、重命名和删除。
 - `web/js/output_cleanup.js`：output 统计、清理预览和确认清理。
 - `web/js/preview.js`：Markdown 预览。
+- `web/js/image_preview.js`：长图预览。
 
 CSS 已拆分到 `web/css/`，`web/styles.css` 作为聚合入口。
 

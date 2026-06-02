@@ -39,12 +39,14 @@ body.light-theme button {
   box-shadow: 0 8px 22px rgba(65, 80, 96, 0.12);
 }
 
-body.light-theme .preflight-toggle {
+body.light-theme .preflight-toggle,
+body.light-theme .progress-toggle {
   border-color: rgba(30, 41, 59, 0.2);
   background: rgba(255, 255, 255, 0.86);
 }
 
-body.light-theme .preflight-toggle:hover:not(:disabled) {
+body.light-theme .preflight-toggle:hover:not(:disabled),
+body.light-theme .progress-toggle:hover:not(:disabled) {
   border-color: rgba(30, 41, 59, 0.3);
   background: #ffffff;
 }

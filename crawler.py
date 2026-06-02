@@ -46,7 +46,7 @@ from export.summary_exporter import calc_date_distribution_fit as _export_calc_d
 from export.summary_exporter import write_summary_txt as _export_write_summary_txt
 from modules.comments.ranking import build_comment_leaderboards as _comments_build_comment_leaderboards
 from modules.crawler_filters import should_exclude_post
-from modules.crawler_scoring import calculate_score
+from modules.crawler_scoring import PreparedScoreConfig, calculate_score_values, prepare_score_config
 from modules.images.url_extract import collect_comment_image_urls as _image_collect_comment_image_urls
 from modules.images.url_extract import collect_top_comment_image_urls as _image_collect_top_comment_image_urls
 from modules.images.url_extract import dedup_image_urls as _image_dedup_image_urls
@@ -350,8 +350,9 @@ class WeiboSuperTopicCrawler:
         if not total:
             return
 
+        score_config = prepare_score_config(config)
         for post in rows:
-            self._set_estimated_score_fields(post, config)
+            self._set_estimated_score_fields(post, config, score_config)
 
         comment_rows = [
             post
@@ -360,7 +361,7 @@ class WeiboSuperTopicCrawler:
             and str(post.get("post_id") or "").strip()
             and str(post.get("author_id") or "").strip()
         ]
-        analysis_rows = self._select_comment_analysis_rows(comment_rows, config)
+        analysis_rows = self._select_comment_analysis_rows(comment_rows, config, score_config)
         analysis_total = len(analysis_rows)
         skipped = len(comment_rows) - analysis_total
         if skipped > 0:
@@ -375,13 +376,13 @@ class WeiboSuperTopicCrawler:
         if worker_count == 1:
             for idx, post in enumerate(analysis_rows, start=1):
                 self._log(f"评分进度 {idx}/{analysis_total}: {post.get('post_id', '-')}")
-                self._enrich_score_fields(post, config)
+                self._enrich_score_fields(post, config, score_config=score_config)
             return
 
         self._log(f"评论结构与基础评分并行处理：{worker_count} 个线程。")
         with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="score-enrich") as executor:
             futures = {
-                executor.submit(self._enrich_score_fields_with_private_session, post, config): post
+                executor.submit(self._enrich_score_fields_with_private_session, post, config, score_config): post
                 for post in analysis_rows
             }
             for completed, future in enumerate(as_completed(futures), start=1):
@@ -393,11 +394,16 @@ class WeiboSuperTopicCrawler:
                         f"评分失败 {completed}/{analysis_total}: {post.get('post_id', '-')}, "
                         f"{type(err).__name__}: {err}"
                     )
-                    self._set_estimated_score_fields(post, config)
+                    self._set_estimated_score_fields(post, config, score_config)
                 if completed == analysis_total or completed % 5 == 0:
                     self._log(f"评分进度 {completed}/{analysis_total}")
 
-    def _select_comment_analysis_rows(self, rows: list[dict], config: CrawlConfig) -> list[dict]:
+    def _select_comment_analysis_rows(
+        self,
+        rows: list[dict],
+        config: CrawlConfig,
+        score_config: PreparedScoreConfig | None = None,
+    ) -> list[dict]:
         if not rows:
             return []
         total = len(rows)
@@ -412,30 +418,53 @@ class WeiboSuperTopicCrawler:
             ),
         )
         ref_now = config.window_end or datetime.now()
+        score_config = score_config or prepare_score_config(config)
         return heapq.nlargest(
             limit,
             rows,
-            key=lambda post: self._estimated_priority_score(post, config, ref_now),
+            key=lambda post: self._estimated_priority_score(post, config, ref_now, score_config),
         )
 
-    def _estimated_priority_score(self, post: dict, config: CrawlConfig, ref_now: datetime) -> float:
+    def _estimated_priority_score(
+        self,
+        post: dict,
+        config: CrawlConfig,
+        ref_now: datetime,
+        score_config: PreparedScoreConfig | None = None,
+    ) -> float:
+        score_config = score_config or prepare_score_config(config)
         likes = int(post.get("likes", 0) or 0)
         comments = int(post.get("comments", 0) or 0)
         reposts = int(post.get("reposts", 0) or 0)
-        comment_factor = max(0.5, float(config.topic_comment_factor))
-        base = likes * config.likes_weight + comments * config.comment_weight * comment_factor + reposts * config.repost_weight
+        base = (
+            likes * score_config.likes_weight
+            + comments * score_config.comment_weight * score_config.topic_comment_factor
+            + reposts * score_config.repost_weight
+        )
         publish_dt = parse_publish_datetime(str(post.get("publish_time") or ""))
         return base * _calc_time_weight(publish_dt, ref_now)
 
-    def _set_estimated_score_fields(self, post: dict, config: CrawlConfig) -> None:
+    def _set_estimated_score_fields(
+        self,
+        post: dict,
+        config: CrawlConfig,
+        score_config: PreparedScoreConfig | None = None,
+    ) -> None:
+        score_config = score_config or prepare_score_config(config)
         total_comments = int(post.get("comments", 0) or 0)
-        comment_factor = max(0.5, float(config.topic_comment_factor))
         publish_dt = parse_publish_datetime(str(post.get("publish_time") or ""))
-        detail = calculate_score({**post, "author_replies": 0, "publish_dt": publish_dt}, config)
+        detail = calculate_score_values(
+            likes=post.get("likes"),
+            comments=post.get("comments"),
+            author_replies=0,
+            reposts=post.get("reposts"),
+            publish_dt=publish_dt,
+            config=score_config,
+        )
 
         post["non_author_comments"] = total_comments
         post["author_replies"] = 0
-        post["topic_comment_factor"] = comment_factor
+        post["topic_comment_factor"] = score_config.topic_comment_factor
         post["base_score"] = detail.base_score
         post["time_weight"] = detail.time_weight
         post["score"] = detail.final_score
@@ -450,6 +479,7 @@ class WeiboSuperTopicCrawler:
         post["comment_analysis_done"] = total_comments <= 0
 
     def _ensure_candidate_comment_analysis(self, posts: list[dict], config: CrawlConfig) -> bool:
+        score_config = prepare_score_config(config)
         candidate_pool = _select_weekly_posts(posts, limit=FINAL_COMMENT_ANALYSIS_LIMIT)
         missing = [
             post
@@ -467,14 +497,14 @@ class WeiboSuperTopicCrawler:
         self._log(f"补全候选热评与评论结构：{total} 条，{worker_count} 个线程。")
         if worker_count == 1:
             for idx, post in enumerate(missing, start=1):
-                self._enrich_score_fields(post, config)
+                self._enrich_score_fields(post, config, score_config=score_config)
                 if idx == total or idx % 5 == 0:
                     self._log(f"候选评论补全进度 {idx}/{total}")
             return True
 
         with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="candidate-comments") as executor:
             futures = {
-                executor.submit(self._enrich_score_fields_with_private_session, post, config): post
+                executor.submit(self._enrich_score_fields_with_private_session, post, config, score_config): post
                 for post in missing
             }
             for completed, future in enumerate(as_completed(futures), start=1):
@@ -490,10 +520,15 @@ class WeiboSuperTopicCrawler:
                     self._log(f"候选评论补全进度 {completed}/{total}")
         return True
 
-    def _enrich_score_fields_with_private_session(self, post: dict, config: CrawlConfig) -> None:
+    def _enrich_score_fields_with_private_session(
+        self,
+        post: dict,
+        config: CrawlConfig,
+        score_config: PreparedScoreConfig | None = None,
+    ) -> None:
         session = self._new_session()
         try:
-            self._enrich_score_fields(post, config, session=session)
+            self._enrich_score_fields(post, config, session=session, score_config=score_config)
         finally:
             session.close()
 
@@ -502,7 +537,9 @@ class WeiboSuperTopicCrawler:
         post: dict,
         config: CrawlConfig,
         session: requests.Session | None = None,
+        score_config: PreparedScoreConfig | None = None,
     ) -> None:
+        score_config = score_config or prepare_score_config(config)
         total_comments = int(post.get("comments", 0) or 0)
         author_id = str(post.get("author_id") or "")
         post_id = str(post.get("post_id") or "")
@@ -535,13 +572,19 @@ class WeiboSuperTopicCrawler:
                 all_comments = []
 
         non_author_comments = max(0, total_comments - author_replies)
-        comment_factor = max(0.5, float(config.topic_comment_factor))
         publish_dt = parse_publish_datetime(str(post.get("publish_time") or ""))
-        detail = calculate_score({**post, "author_replies": author_replies, "publish_dt": publish_dt}, config)
+        detail = calculate_score_values(
+            likes=post.get("likes"),
+            comments=post.get("comments"),
+            author_replies=author_replies,
+            reposts=post.get("reposts"),
+            publish_dt=publish_dt,
+            config=score_config,
+        )
 
         post["non_author_comments"] = non_author_comments
         post["author_replies"] = author_replies
-        post["topic_comment_factor"] = comment_factor
+        post["topic_comment_factor"] = score_config.topic_comment_factor
         post["base_score"] = detail.base_score
         post["time_weight"] = detail.time_weight
         post["score"] = detail.final_score

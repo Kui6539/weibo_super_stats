@@ -13,6 +13,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from cookie_helper import (
     CookieFetchError,
     browser_display_name,
+    clear_cdp_debug_cache,
     close_debug_browser,
     extract_cookie_from_text,
     get_weibo_cookie_header,
@@ -58,6 +59,7 @@ from core.paths import is_relative_to, normalize_output_dir, safe_resolve
 from crawler import parse_super_topic_id
 from export.reexport import reexport_from_cache
 from modules.crawler_client import WeiboClient
+from modules.images.candidate_thumbnails import THUMBNAIL_DIR_NAME
 from modules.topic import (
     build_report_title,
     calculate_weekly_issue,
@@ -102,6 +104,9 @@ class AppRequestHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/report-asset":
             self.handle_report_asset()
+            return
+        if path == "/api/candidate-thumbnail":
+            self.handle_candidate_thumbnail()
             return
         if path == "/api/history/asset":
             self.handle_history_asset()
@@ -206,6 +211,9 @@ class AppRequestHandler(BaseHTTPRequestHandler):
                 return
             if path == "/api/cookie/edge-debug":
                 self.handle_cookie_edge_debug()
+                return
+            if path == "/api/cookie/clear-cdp-cache":
+                self.handle_cookie_clear_cdp_cache()
                 return
             if path == "/api/cookie/extract":
                 self.handle_cookie_extract()
@@ -527,6 +535,32 @@ class AppRequestHandler(BaseHTTPRequestHandler):
             return
         send_static_file(self, asset_path)
 
+    def handle_candidate_thumbnail(self) -> None:
+        parsed = urlparse(self.path)
+        qs = parse_qs(parsed.query)
+        run_id = (qs.get("run_id") or [""])[0]
+        rel_text = (qs.get("path") or [""])[0]
+        job = get_current_job()
+        run_dir = getattr(job, "run_dir", None) if job else None
+        if not run_dir or not rel_text:
+            json_error(self, "ASSET_NOT_FOUND", "缩略图不存在", "当前没有可读取的候选缩略图。", HTTPStatus.NOT_FOUND)
+            return
+        run_dir = Path(run_dir).resolve()
+        if run_id and run_id != run_dir.name:
+            json_error(self, "ASSET_NOT_FOUND", "缩略图不属于当前任务", "请刷新任务状态后重试。", HTTPStatus.NOT_FOUND)
+            return
+        cache_dir = CacheStore(run_dir).cache_dir
+        try:
+            asset_path = safe_resolve(cache_dir, unquote(rel_text).replace("\\", "/"))
+        except ValueError:
+            json_error(self, "ASSET_PATH_REJECTED", "缩略图路径越界", "已拒绝访问非缓存目录资源。", HTTPStatus.BAD_REQUEST)
+            return
+        thumbnail_root = (cache_dir / THUMBNAIL_DIR_NAME).resolve()
+        if not is_relative_to(asset_path, thumbnail_root) or not asset_path.exists() or not asset_path.is_file():
+            json_error(self, "ASSET_NOT_FOUND", "缩略图不存在", "请刷新任务状态后重试。", HTTPStatus.NOT_FOUND)
+            return
+        send_static_file(self, asset_path)
+
     def handle_help_doc(self) -> None:
         if not HELP_DOC_PATH.exists() or not HELP_DOC_PATH.is_file():
             json_error(self, "HELP_DOC_NOT_FOUND", "教程文档不存在", "请确认 docs/Cookie获取简短教程.md 是否存在。", HTTPStatus.NOT_FOUND)
@@ -582,6 +616,30 @@ class AppRequestHandler(BaseHTTPRequestHandler):
         endpoint = launch_debug_browser(browser, ROOT_DIR / f".{browser}_cdp_profile")
         console_log(f"调试 {browser_label} 已启动：{endpoint}")
         send_json(self, {"endpoint": endpoint, "browser": browser, "browser_label": browser_label})
+
+    def handle_cookie_clear_cdp_cache(self) -> None:
+        console_log("正在清理 CDP 调试缓存...")
+        result = clear_cdp_debug_cache(ROOT_DIR)
+        deleted_count = len(result.get("deleted") or [])
+        missing_count = len(result.get("missing") or [])
+        errors = list(result.get("errors") or [])
+        if errors:
+            send_json(
+                self,
+                {
+                    "ok": False,
+                    **result,
+                    "error": {
+                        "code": "CDP_CACHE_CLEAR_FAILED",
+                        "message": "CDP 调试缓存清理不完整",
+                        "suggestion": "请关闭调试浏览器窗口后重试。",
+                    },
+                },
+                HTTPStatus.CONFLICT,
+            )
+            return
+        console_log(f"CDP 调试缓存清理完成：删除 {deleted_count} 个，未找到 {missing_count} 个。")
+        send_json(self, {"ok": True, **result})
 
     def handle_cookie_extract(self) -> None:
         payload = parse_json_body(self)

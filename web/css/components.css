@@ -356,16 +356,40 @@ h2 {
     inset 0 1px 0 rgba(255, 255, 255, 0.12);
   -webkit-backdrop-filter: blur(7px) saturate(1.2);
   backdrop-filter: blur(7px) saturate(1.2);
+  contain: layout paint;
+  transform: translate3d(0, 0, 0);
+  will-change: transform, opacity;
 }
 
 .floating-log-panel.log-window-opening {
   pointer-events: none;
   transform-origin: top left;
+  box-shadow:
+    0 22px 58px rgba(0, 0, 0, 0.34),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  -webkit-backdrop-filter: blur(4px) saturate(1.12);
+  backdrop-filter: blur(4px) saturate(1.12);
 }
 
 .floating-log-panel.log-window-closing {
   pointer-events: none;
   transform-origin: top left;
+  box-shadow:
+    0 20px 52px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  -webkit-backdrop-filter: blur(3px) saturate(1.08);
+  backdrop-filter: blur(3px) saturate(1.08);
+}
+
+.floating-log-panel.log-window-opening .log-tools,
+.floating-log-panel.log-window-opening .backend-log {
+  visibility: hidden;
+  opacity: 0;
+}
+
+.floating-log-panel.log-window-content-in .log-tools,
+.floating-log-panel.log-window-content-in .backend-log {
+  animation: log-window-content-in 140ms ease-out both;
 }
 
 .log-window-title {
@@ -480,6 +504,17 @@ h2 {
   to {
     opacity: 1;
     transform: scale(1);
+  }
+}
+
+@keyframes log-window-content-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 4px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
   }
 }
 

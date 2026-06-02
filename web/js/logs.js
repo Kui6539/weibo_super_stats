@@ -1,6 +1,9 @@
 window.WeiboLogs = {
   createController({ ui, controls, escapeHtml, showToast, getCurrentJob, stageLabel, clamp, onPositionChange }) {
-    const MORPH_FRAME_COUNT = 60;
+    const FLOATING_OPEN_DURATION = 190;
+    const FLOATING_CLOSE_DURATION = 150;
+    const FLOATING_OPEN_EASING = "cubic-bezier(0.16, 1, 0.3, 1)";
+    const FLOATING_CLOSE_EASING = "cubic-bezier(0.4, 0, 0.2, 1)";
 
     let lastLogJobId = "";
     let logClearCursor = 0;
@@ -10,6 +13,7 @@ window.WeiboLogs = {
     let lastRenderedCount = 0;
     let floatingAnimation = null;
     let bubblePopTimer = null;
+    let contentRevealTimer = null;
     let openAnchor = null;
     let panelMovedAfterOpen = false;
     let lastPosition = null;
@@ -104,7 +108,6 @@ window.WeiboLogs = {
       ui.logPanel.classList.add("log-window-opening");
       animateBubbleIntoPanel(bubbleRect, panelRect);
       notifyPositionChange();
-      scrollToBottom();
     }
 
     function hidePanel(options = {}) {
@@ -287,31 +290,26 @@ window.WeiboLogs = {
     function animatePanelIntoBubble(panelRect, bubbleRect) {
       const dx = bubbleRect.left - panelRect.left;
       const dy = bubbleRect.top - panelRect.top;
-      const scaleX = clamp(bubbleRect.width / panelRect.width, 0.12, 0.42);
-      const scaleY = clamp(bubbleRect.height / panelRect.height, 0.08, 0.34);
-      if (typeof ui.logPanel.animate !== "function") {
+      if (prefersReducedMotion() || typeof ui.logPanel.animate !== "function") {
         finishHidePanel(true);
         return;
       }
+      const endScale = panelScaleFromBubble(panelRect, bubbleRect);
       floatingAnimation = ui.logPanel.animate(
-        buildMorphFrames({
-          dx,
-          dy,
-          mode: "close",
-          fromScaleX: 1,
-          fromScaleY: 1,
-          toScaleX: scaleX,
-          toScaleY: scaleY,
-          fromOpacity: 1,
-          toOpacity: 0,
-          fromRadius: 8,
-          toRadius: 999,
-          fromBlur: 0,
-          toBlur: 2,
-        }),
+        [
+          { opacity: 1, transform: "translate3d(0, 0, 0) scale(1)" },
+          {
+            opacity: 0.76,
+            transform: `translate3d(${(dx * 0.12).toFixed(2)}px, ${(dy * 0.12).toFixed(2)}px, 0) scale(0.92)`,
+          },
+          {
+            opacity: 0,
+            transform: `translate3d(${dx.toFixed(2)}px, ${dy.toFixed(2)}px, 0) scale(${endScale.toFixed(4)})`,
+          },
+        ],
         {
-          duration: 260,
-          easing: "linear",
+          duration: FLOATING_CLOSE_DURATION,
+          easing: FLOATING_CLOSE_EASING,
           fill: "forwards",
         },
       );
@@ -327,31 +325,26 @@ window.WeiboLogs = {
     function animateBubbleIntoPanel(bubbleRect, panelRect) {
       const dx = bubbleRect.left - panelRect.left;
       const dy = bubbleRect.top - panelRect.top;
-      const scaleX = clamp(bubbleRect.width / panelRect.width, 0.12, 0.42);
-      const scaleY = clamp(bubbleRect.height / panelRect.height, 0.08, 0.34);
-      if (typeof ui.logPanel.animate !== "function") {
+      if (prefersReducedMotion() || typeof ui.logPanel.animate !== "function") {
         finishOpenPanel();
         return;
       }
+      const startScale = panelScaleFromBubble(panelRect, bubbleRect);
       floatingAnimation = ui.logPanel.animate(
-        buildMorphFrames({
-          dx,
-          dy,
-          mode: "open",
-          fromScaleX: scaleX,
-          fromScaleY: scaleY,
-          toScaleX: 1,
-          toScaleY: 1,
-          fromOpacity: 0,
-          toOpacity: 1,
-          fromRadius: 999,
-          toRadius: 8,
-          fromBlur: 2,
-          toBlur: 0,
-        }),
+        [
+          {
+            opacity: 0.16,
+            transform: `translate3d(${dx.toFixed(2)}px, ${dy.toFixed(2)}px, 0) scale(${startScale.toFixed(4)})`,
+          },
+          {
+            opacity: 0.76,
+            transform: `translate3d(${(dx * 0.12).toFixed(2)}px, ${(dy * 0.12).toFixed(2)}px, 0) scale(0.92)`,
+          },
+          { opacity: 1, transform: "translate3d(0, 0, 0) scale(1)" },
+        ],
         {
-          duration: 280,
-          easing: "linear",
+          duration: FLOATING_OPEN_DURATION,
+          easing: FLOATING_OPEN_EASING,
           fill: "forwards",
         },
       );
@@ -366,67 +359,20 @@ window.WeiboLogs = {
 
     function finishOpenPanel() {
       ui.logPanel.classList.remove("log-window-opening", "log-window-closing");
+      ui.logPanel.classList.add("log-window-content-in");
       controls.logBubble.classList.add("hidden");
       controls.logBubble.classList.remove("log-bubble-pending", "log-bubble-pop");
-    }
-
-    function buildMorphFrames({
-      dx,
-      dy,
-      mode,
-      fromScaleX,
-      fromScaleY,
-      toScaleX,
-      toScaleY,
-      fromOpacity,
-      toOpacity,
-      fromRadius,
-      toRadius,
-      fromBlur,
-      toBlur,
-    }) {
-      return Array.from({ length: MORPH_FRAME_COUNT }, (_, index) => {
-        const raw = index / (MORPH_FRAME_COUNT - 1);
-        const t = iosMorph(raw, mode);
-        const settledT = clamp(t, 0, 1);
-        const translateRatio = isClosing(fromOpacity, toOpacity) ? settledT : 1 - settledT;
-        const scaleX = lerp(fromScaleX, toScaleX, t);
-        const scaleY = lerp(fromScaleY, toScaleY, t);
-        const radiusT = clamp(t, 0, 1);
-        return {
-          offset: raw,
-          opacity: lerp(fromOpacity, toOpacity, fadeCurve(raw)).toFixed(3),
-          transform: `translate3d(${(dx * translateRatio).toFixed(2)}px, ${(dy * translateRatio).toFixed(2)}px, 0) scale(${scaleX.toFixed(4)}, ${scaleY.toFixed(4)})`,
-          borderRadius: `${lerp(fromRadius, toRadius, radiusT).toFixed(2)}px`,
-          filter: `blur(${lerp(fromBlur, toBlur, radiusT).toFixed(3)}px)`,
-        };
-      });
-    }
-
-    function iosMorph(value, mode) {
-      const t = clamp(value, 0, 1);
-      const base = 1 - (1 - t) ** 5;
-      const overshoot = mode === "open" ? 0.055 : 0.032;
-      const spring = Math.sin(Math.PI * t) * overshoot * (1 - t) ** 0.72;
-      const settle = Math.sin(Math.PI * Math.min(1, t * 2.4)) * 0.01 * (1 - t);
-      return base + spring - settle;
-    }
-
-    function fadeCurve(value) {
-      return value < 0.18 ? value * 0.45 : 0.081 + (value - 0.18) / 0.82;
-    }
-
-    function isClosing(fromOpacity, toOpacity) {
-      return fromOpacity > toOpacity;
-    }
-
-    function lerp(from, to, ratio) {
-      return from + (to - from) * ratio;
+      scrollToBottom();
+      clearContentRevealTimer();
+      contentRevealTimer = window.setTimeout(() => {
+        ui.logPanel?.classList.remove("log-window-content-in");
+        contentRevealTimer = null;
+      }, 150);
     }
 
     function finishHidePanel(popBubble) {
       ui.logPanel.classList.add("hidden");
-      ui.logPanel.classList.remove("log-window-closing", "log-window-opening");
+      ui.logPanel.classList.remove("log-window-closing", "log-window-opening", "log-window-content-in");
       controls.logBubble.classList.remove("log-bubble-pending");
       if (popBubble) {
         controls.logBubble.classList.add("log-bubble-pop");
@@ -452,13 +398,34 @@ window.WeiboLogs = {
       }
       clearBubblePopTimer();
       ui.logPanel?.classList.remove("log-window-closing", "log-window-opening");
+      ui.logPanel?.classList.remove("log-window-content-in");
       controls.logBubble?.classList.remove("log-bubble-pending", "log-bubble-pop");
+      clearContentRevealTimer();
     }
 
     function clearBubblePopTimer() {
       if (!bubblePopTimer) return;
       window.clearTimeout(bubblePopTimer);
       bubblePopTimer = null;
+    }
+
+    function clearContentRevealTimer() {
+      if (!contentRevealTimer) return;
+      window.clearTimeout(contentRevealTimer);
+      contentRevealTimer = null;
+    }
+
+    function prefersReducedMotion() {
+      return window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+    }
+
+    function panelScaleFromBubble(panelRect, bubbleRect) {
+      if (!panelRect.width || !panelRect.height || !bubbleRect.width || !bubbleRect.height) {
+        return 0.22;
+      }
+      const widthScale = bubbleRect.width / panelRect.width;
+      const heightScale = bubbleRect.height / panelRect.height;
+      return clamp(Math.sqrt(widthScale * heightScale) * 1.08, 0.18, 0.34);
     }
 
     function isNearBottom() {

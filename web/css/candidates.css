@@ -194,6 +194,27 @@
   object-fit: cover;
 }
 
+.candidate-image-more,
+.candidate-image-note {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.candidate-image-more {
+  align-self: center;
+  min-height: 24px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 8px;
+  background: rgba(255, 255, 255, 0.07);
+  white-space: nowrap;
+}
+
+.candidate-image-note {
+  margin-top: 8px;
+}
+
 .candidate-list {
   padding: 18px;
   display: flex;

@@ -71,6 +71,15 @@ window.WeiboImagePreview = {
       }
     }
 
+    function showPage(index) {
+      if (!hasPages()) {
+        showToast("当前没有可预览的长图。", "warning");
+        return;
+      }
+      goto(index);
+      show();
+    }
+
     function hide() {
       if (!ui.imagePreviewPanel) return;
       ui.layout.classList.remove("has-image-preview");
@@ -246,6 +255,7 @@ window.WeiboImagePreview = {
       setPages,
       reset,
       show,
+      showPage,
       hide,
       toggle,
       next,

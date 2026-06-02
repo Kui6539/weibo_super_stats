@@ -3,7 +3,7 @@ setlocal
 chcp 65001 >nul
 cd /d "%~dp0.."
 
-set "VERSION=0.10.2"
+set "VERSION=0.11.1"
 set "ZIP_NAME=weibo_super_stats_v%VERSION%.zip"
 set "DIST_DIR=%CD%\dist"
 set "STAGE=%TEMP%\weibo_super_stats_release_%RANDOM%_%RANDOM%"
@@ -21,7 +21,7 @@ if errorlevel 1 (
   exit /b 1
 )
 
-for %%D in (core server modules export web tests scripts docs) do (
+for %%D in (core server modules export web tests scripts docs assets) do (
   if exist "%%D" robocopy "%%D" "%STAGE%\%%D" /E /XD __pycache__ .pytest_cache .ruff_cache /XF *.pyc *.pyo *.log >nul
   if errorlevel 8 (
     echo [make_release_zip] Failed to copy %%D.

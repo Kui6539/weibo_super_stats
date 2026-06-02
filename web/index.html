@@ -179,6 +179,7 @@
                 <div class="cookie-action-buttons">
                   <button id="edgeDebugBtn" type="button" class="secondary">打开调试浏览器</button>
                   <button id="autoCookieBtn" type="button" class="secondary">自动读取 Cookie</button>
+                  <button id="clearCdpCacheBtn" type="button" class="secondary danger-button">清除 CDP 缓存</button>
                 </div>
               </section>
               <section class="cookie-method-card">
@@ -282,7 +283,18 @@
         <section id="monitorPanel" class="panel monitor-panel" aria-label="任务状态">
           <div class="section-title">
             <h2>任务状态</h2>
-            <span id="jobMeta" class="muted">等待启动</span>
+            <div class="monitor-title-actions">
+              <span id="jobMeta" class="muted">等待启动</span>
+              <button
+                id="progressToggleBtn"
+                type="button"
+                class="progress-toggle hidden"
+                aria-controls="logBox"
+                aria-expanded="true"
+              >
+                收起
+              </button>
+            </div>
           </div>
 
           <div class="progress-stack" id="logBox" aria-live="polite"></div>

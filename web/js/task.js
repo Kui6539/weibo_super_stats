@@ -20,24 +20,36 @@ window.WeiboTask = {
     let pollTimer = null;
     let pollFailures = 0;
     let currentRenderedJob = null;
+    let cancelledToastJobId = null;
 
     let lastJobActive = false;
 
     function renderJob(job) {
+      const previousJob = currentRenderedJob;
       currentRenderedJob = job;
       progressController.updateStatus(job);
       progressController.render(job);
       logsController.render(job);
       candidatesController.render(job);
       cacheController.renderResult(job);
+      if (job?.status !== "cancelled") {
+        cancelledToastJobId = null;
+      }
 
       const active = ["running", "awaiting_selection", "exporting"].includes(job?.status);
       controls.start.disabled = active;
       controls.cancelJob.classList.toggle("hidden", !active);
-      controls.cancelJob.disabled = !active || job?.status === "exporting" || Boolean(controls.cancelJob.dataset.busyText);
+      controls.cancelJob.disabled =
+        !active ||
+        job?.status === "exporting" ||
+        Boolean(job?.cancel_requested) ||
+        Boolean(controls.cancelJob.dataset.busyText);
       if (!active && pollTimer) {
         clearTimeout(pollTimer);
         pollTimer = null;
+      }
+      if (job?.status === "cancelled" && previousJob?.id === job.id && previousJob?.status !== "cancelled") {
+        notifyCancelled(job);
       }
       if (lastJobActive && !active) {
         historyController?.load();
@@ -58,6 +70,14 @@ window.WeiboTask = {
         appendClientLog(`状态刷新失败：${err.message}`);
         scheduleNextPoll(currentRenderedJob);
       }
+    }
+
+    function notifyCancelled(job) {
+      if (!job?.id || cancelledToastJobId === job.id) return;
+      cancelledToastJobId = job.id;
+      const cleanup = job.cancel_cleanup || {};
+      const deletedCount = Array.isArray(cleanup.deleted_dirs) ? cleanup.deleted_dirs.length : 0;
+      showToast(deletedCount ? `任务已取消，已清理 ${deletedCount} 个目录。` : "任务已取消。", "info");
     }
 
     function startPolling() {
@@ -95,7 +115,7 @@ window.WeiboTask = {
           body: JSON.stringify(payload),
         });
         const preflight = response.data || response;
-        renderPreflightInline(preflight);
+        const preflightCollapse = renderPreflightInline(preflight);
         const hasError = preflight.checks?.some((item) => item.status === "error");
         const hasWarning = preflight.checks?.some((item) => item.status === "warning");
         if (hasError || hasWarning) {
@@ -104,7 +124,7 @@ window.WeiboTask = {
         }
         showToast("预检查通过，开始任务。");
         setBusy(controls.start, false);
-        await startJobAfterPreflight(payload);
+        await startJobAfterPreflight(payload, { revealAfter: preflightCollapse });
       } catch (err) {
         appendClientLog(err.message);
       } finally {
@@ -116,7 +136,12 @@ window.WeiboTask = {
       }
     }
 
-    async function startJobAfterPreflight(payload = readForm()) {
+    async function startJobAfterPreflight(payload = readForm(), options = {}) {
+      const revealAfter = options.revealAfter;
+      const shouldSequenceProgress = Boolean(revealAfter?.then);
+      if (shouldSequenceProgress) {
+        progressController.deferNextActiveJobReveal();
+      }
       setBusy(controls.start, true, "正在启动");
       try {
         const data = await api("/api/start", {
@@ -128,8 +153,17 @@ window.WeiboTask = {
         cacheController.resetPreviewCache();
         previewController.reset();
         renderJob(job);
+        if (shouldSequenceProgress) {
+          revealAfter.then(
+            () => progressController.revealCurrentJob(),
+            () => progressController.revealCurrentJob(),
+          );
+        }
         startPolling();
       } catch (err) {
+        if (shouldSequenceProgress) {
+          progressController.cancelDeferredReveal();
+        }
         appendClientLog(err.message);
       } finally {
         setBusy(controls.start, false);
@@ -174,7 +208,7 @@ window.WeiboTask = {
     }
 
     async function cancelJob() {
-      const confirmed = window.confirm("确定要取消当前任务吗？已抓取的数据和已生成的临时文件可能会保留。");
+      const confirmed = window.confirm("确定要取消当前任务吗？未完成的任务目录和对应缓存会自动删除，已完成的历史任务不会受影响。");
       if (!confirmed) return;
       setBusy(controls.cancelJob, true, "正在取消");
       showToast("正在取消，请等待当前请求结束……", "warning");
@@ -184,13 +218,15 @@ window.WeiboTask = {
         renderJob(job);
         startPolling();
         if (job?.status === "cancelled") {
-          showToast("任务已取消。", "info");
+          notifyCancelled(job);
+        } else {
+          window.setTimeout(refreshStatus, 800);
         }
       } catch (err) {
         appendClientLog(err.message);
       } finally {
         setBusy(controls.cancelJob, false);
-        if (isActive(currentRenderedJob)) {
+        if (isActive(currentRenderedJob) && !currentRenderedJob?.cancel_requested && currentRenderedJob?.status !== "exporting") {
           controls.cancelJob.disabled = false;
         }
       }

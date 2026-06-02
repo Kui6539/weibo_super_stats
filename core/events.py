@@ -11,6 +11,7 @@ STAGE_LABELS = {
     "crawl": "抓取帖子数据",
     "hydrate": "补全微博正文",
     "score": "评论分析与评分",
+    "thumbnails": "下载预选帖缩略图",
     "selection": "等待人工筛选",
     "images": "下载图片",
     "export": "导出文件",
@@ -19,7 +20,7 @@ STAGE_LABELS = {
     "cancelled": "任务已取消",
 }
 
-STAGE_ORDER = ["init", "crawl", "hydrate", "score", "selection", "images", "export", "completed"]
+STAGE_ORDER = ["init", "crawl", "hydrate", "score", "thumbnails", "selection", "images", "export", "completed"]
 EVENT_LIMIT = 1000
 SNAPSHOT_LIMIT = 300
 
@@ -129,4 +130,3 @@ def make_event(
         percent=clamp_percent(percent) if percent is not None else None,
         payload=sanitize_event_payload(payload or {}),
     )
-
