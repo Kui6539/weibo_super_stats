@@ -43,6 +43,7 @@ DEFAULT_GLOBAL: dict[str, Any] = {
     "advanced_mode": "false",
     "log_position": {"mode": "bubble", "left": 18, "top": 86},
     "cookie_browser": "edge",
+    "suppress_help_on_startup": False,
 }
 
 DEFAULT_CONFIG: dict[str, Any] = {
@@ -134,6 +135,7 @@ def load_saved_config() -> dict[str, Any]:
         "advanced_mode": advanced_mode,
         "log_position": normalize_log_position(data.get("log_position")),
         "cookie_browser": normalize_cookie_browser(data.get("cookie_browser")),
+        "suppress_help_on_startup": _as_bool(data.get("suppress_help_on_startup")),
         "export_types": list(data.get("export_types") or DEFAULT_PRESET["export_types"]),
         "download_images": bool(data.get("download_images", True)),
         "active_preset": str(data.get("active_preset") or DEFAULT_PRESET_ID),
@@ -197,6 +199,8 @@ def save_user_config(payload: dict[str, Any]) -> dict[str, Any]:
         global_config["log_position"] = normalize_log_position(payload.get("log_position"))
     if "cookie_browser" in payload:
         global_config["cookie_browser"] = normalize_cookie_browser(payload.get("cookie_browser"))
+    if "suppress_help_on_startup" in payload:
+        global_config["suppress_help_on_startup"] = _as_bool(payload.get("suppress_help_on_startup"))
     return _strip_config_for_ui(flatten_active_config(save_config(current)))
 
 
@@ -383,6 +387,7 @@ def app_defaults() -> dict[str, Any]:
         "advanced_mode": "false",
         "log_position": {"mode": "bubble", "left": 18, "top": 86},
         "cookie_browser": "edge",
+        "suppress_help_on_startup": False,
         "version": __version__,
         "config_version": CONFIG_VERSION,
     }
@@ -411,6 +416,7 @@ def flatten_active_config(config: dict[str, Any]) -> dict[str, Any]:
         "advanced_mode": str(global_config.get("advanced_mode") or "").strip(),
         "log_position": normalize_log_position(global_config.get("log_position")),
         "cookie_browser": normalize_cookie_browser(global_config.get("cookie_browser")),
+        "suppress_help_on_startup": _as_bool(global_config.get("suppress_help_on_startup")),
         "export_types": list(preset.get("export_types") or DEFAULT_PRESET["export_types"]),
         "download_images": bool(preset.get("download_images", True)),
         "active_preset": active,
@@ -440,6 +446,8 @@ def normalize_global_config(config: dict[str, Any]) -> dict[str, Any]:
         clean["log_position"] = normalize_log_position(config.get("log_position"))
     if "cookie_browser" in config:
         clean["cookie_browser"] = normalize_cookie_browser(config.get("cookie_browser"))
+    if "suppress_help_on_startup" in config:
+        clean["suppress_help_on_startup"] = _as_bool(config.get("suppress_help_on_startup"))
     return clean
 
 
@@ -562,6 +570,7 @@ def _strip_config_for_ui(config: dict[str, Any]) -> dict[str, Any]:
         "advanced_mode": str(config.get("advanced_mode") or "").strip(),
         "log_position": normalize_log_position(config.get("log_position")),
         "cookie_browser": normalize_cookie_browser(config.get("cookie_browser")),
+        "suppress_help_on_startup": _as_bool(config.get("suppress_help_on_startup")),
         "export_types": list(config.get("export_types") or DEFAULT_PRESET["export_types"]),
         "download_images": bool(config.get("download_images", True)),
         "active_preset": str(config.get("active_preset") or DEFAULT_PRESET_ID),

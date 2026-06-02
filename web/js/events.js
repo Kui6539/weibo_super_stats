@@ -228,6 +228,7 @@ window.WeiboEvents = {
     });
 
     ui.helpClose.addEventListener("click", () => helpController.close());
+    ui.helpSuppressAutoPopup?.addEventListener("change", () => helpController.handleSuppressChange());
     ui.helpOverlay.addEventListener("click", (event) => helpController.handleOverlayClick(event));
     ui.helpDragHandle.addEventListener("pointerdown", (event) => helpController.startDrag(event));
 

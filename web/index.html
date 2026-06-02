@@ -451,11 +451,17 @@
     <div id="helpOverlay" class="help-overlay" aria-hidden="true">
       <section id="helpDialog" class="help-dialog" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
         <div id="helpDragHandle" class="side-toolbar help-toolbar">
-          <div>
+          <div class="help-heading">
             <h2 id="helpTitle">使用说明</h2>
             <p id="helpPath" class="muted"></p>
           </div>
-          <button id="helpCloseBtn" type="button" class="secondary">关闭</button>
+          <div class="help-actions">
+            <label class="help-autoshow-toggle" for="helpSuppressAutoPopup">
+              <input id="helpSuppressAutoPopup" type="checkbox" />
+              <span>下一次不再主动弹出</span>
+            </label>
+            <button id="helpCloseBtn" type="button" class="secondary">关闭</button>
+          </div>
         </div>
         <article id="helpContent" class="markdown-body help-content"></article>
       </section>

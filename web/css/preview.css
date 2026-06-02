@@ -260,11 +260,51 @@
   user-select: none;
 }
 
+.help-heading {
+  min-width: 0;
+}
+
 .help-dialog.dragging .help-toolbar {
   cursor: grabbing;
 }
 
+.help-actions {
+  display: flex;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.help-autoshow-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0 10px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.06);
+  font-size: 13px;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.help-autoshow-toggle input {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  accent-color: var(--text);
+}
+
+.help-autoshow-toggle span {
+  white-space: nowrap;
+}
+
 .help-toolbar button {
+  flex-shrink: 0;
   cursor: pointer;
 }
 
@@ -376,6 +416,18 @@
 .help-dialog {
     width: calc(100vw - 24px);
     max-height: calc(100vh - 32px);
+  }
+}
+
+@media (max-width: 620px) {
+  .help-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .help-autoshow-toggle {
+    flex: 1 1 auto;
+    justify-content: center;
   }
 }
 

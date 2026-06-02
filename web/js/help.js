@@ -1,6 +1,8 @@
 window.WeiboHelp = {
-  createController({ ui, api, previewController, appendClientLog, clamp }) {
+  createController({ ui, api, previewController, appendClientLog, clamp, setSaveState }) {
     let dragState = null;
+    let suppressAutoPopup = false;
+    let preferenceSaveSeq = 0;
 
     async function load() {
       try {
@@ -30,8 +32,39 @@ window.WeiboHelp = {
       document.body.classList.remove("help-modal-open");
     }
 
+    function setSuppressAutoPopup(value) {
+      suppressAutoPopup = value === true || value === "true" || value === "1";
+      if (ui.helpSuppressAutoPopup) {
+        ui.helpSuppressAutoPopup.checked = suppressAutoPopup;
+      }
+    }
+
+    async function handleSuppressChange() {
+      setSuppressAutoPopup(Boolean(ui.helpSuppressAutoPopup?.checked));
+      await saveSuppressPreference();
+    }
+
+    async function saveSuppressPreference() {
+      const saveSeq = ++preferenceSaveSeq;
+      setSaveState?.("配置待保存", "pending");
+      try {
+        await api("/api/config", {
+          method: "POST",
+          body: JSON.stringify({ suppress_help_on_startup: suppressAutoPopup }),
+        });
+        if (saveSeq === preferenceSaveSeq) {
+          setSaveState?.("配置已保存", "saved");
+        }
+      } catch (err) {
+        if (saveSeq === preferenceSaveSeq) {
+          setSaveState?.(`配置保存失败：${err.message}`, "error");
+        }
+        appendClientLog(err.message);
+      }
+    }
+
     function startDrag(event) {
-      if (event.button !== 0 || event.target.closest("button, a, input, textarea")) return;
+      if (event.button !== 0 || event.target.closest("button, a, input, textarea, label")) return;
       const rect = ui.helpDialog.getBoundingClientRect();
       dragState = {
         offsetX: event.clientX - rect.left,
@@ -78,6 +111,9 @@ window.WeiboHelp = {
       load,
       show,
       close,
+      setSuppressAutoPopup,
+      handleSuppressChange,
+      isSuppressAutoPopup: () => suppressAutoPopup,
       startDrag,
       handleOverlayClick,
       handleEscape,

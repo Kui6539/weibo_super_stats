@@ -38,6 +38,7 @@ window.WeiboConfig = {
       logsController.applyPosition(defaults.log_position);
       configReady = true;
       setSaveState("配置自动保存", "ready");
+      return defaults;
     }
 
     return {

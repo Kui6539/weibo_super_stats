@@ -50,6 +50,17 @@ class ConfigTests(unittest.TestCase):
         fallback = config.migrate_config({"cookie_browser": "firefox"})
         self.assertEqual(fallback["global"]["cookie_browser"], "edge")
 
+    def test_help_auto_popup_preference_is_global(self) -> None:
+        migrated = config.migrate_config({"suppress_help_on_startup": "true"})
+        self.assertTrue(migrated["global"]["suppress_help_on_startup"])
+
+        saved = config.save_user_config({"suppress_help_on_startup": True})
+        self.assertTrue(saved["suppress_help_on_startup"])
+        self.assertTrue(config.app_defaults()["suppress_help_on_startup"])
+
+        config.save_user_config({"super_topic": "100808abc"})
+        self.assertTrue(config.load_config()["global"]["suppress_help_on_startup"])
+
 
 if __name__ == "__main__":
     unittest.main()

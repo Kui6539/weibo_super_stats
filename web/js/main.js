@@ -132,6 +132,7 @@ const ui = {
   helpContent: $("helpContent"),
   helpPath: $("helpPath"),
   helpClose: $("helpCloseBtn"),
+  helpSuppressAutoPopup: $("helpSuppressAutoPopup"),
   historyTopbar: $("historyTopbar"),
   historyDropdown: $("historyDropdown"),
   historyBackdrop: $("historyBackdrop"),
@@ -327,6 +328,7 @@ const helpController = window.WeiboHelp.createController({
   previewController,
   appendClientLog,
   clamp,
+  setSaveState,
 });
 
 const particlesController = window.WeiboParticles.createController({
@@ -451,7 +453,7 @@ particlesController.init();
 
 configController
   .initDefaults()
-  .then(async () => {
+  .then(async (defaults = {}) => {
     preflightController.restoreCache();
     await presetController.load();
     topicPreviewController.resetIssueAutoState();
@@ -459,7 +461,11 @@ configController
     await historyController.load();
     await outputCleanupController.loadSummary();
     await taskController.refreshStatus();
-    await helpController.load();
+    const suppressHelp = defaults.suppress_help_on_startup === true || defaults.suppress_help_on_startup === "true";
+    helpController.setSuppressAutoPopup(suppressHelp);
+    if (!suppressHelp) {
+      await helpController.load();
+    }
   })
   .catch((err) => {
     appendClientLog(err.message);
