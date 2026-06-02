@@ -25,3 +25,4 @@ weibo_stats_history.broken.json
 Thumbs.db
 
 .playwright-mcp/
+.claude/
