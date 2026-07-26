@@ -12,6 +12,9 @@ window.WeiboParticles = {
       for (let index = 0; index < particleCount; index += 1) {
         const particle = document.createElement("span");
         particle.className = "particle";
+        const dot = document.createElement("span");
+        dot.className = "particle-dot";
+        particle.appendChild(dot);
         particle.style.setProperty("--x", String(Math.random() * 100));
         particle.style.setProperty("--size", `${(Math.random() * 1.8 + 1.1).toFixed(2)}px`);
         particle.style.setProperty("--opacity", (Math.random() * 0.34 + 0.18).toFixed(2));
@@ -37,30 +40,41 @@ window.WeiboParticles = {
       if (!particlePointer || !ui.particleLayer) return;
       const radius = 150;
       const maxOffset = 66;
-      for (const particle of ui.particleLayer.children) {
+      const particles = Array.from(ui.particleLayer.children);
+
+      // Read every position first, then write every offset. Alternating a
+      // getBoundingClientRect with a style write makes the browser re-layout
+      // once per particle -- 130 forced layouts per pointer frame.
+      const offsets = particles.map((particle) => {
         const rect = particle.getBoundingClientRect();
-        const centerX = rect.left + rect.width / 2;
-        const centerY = rect.top + rect.height / 2;
-        const dx = centerX - particlePointer.x;
-        const dy = centerY - particlePointer.y;
+        const dx = rect.left + rect.width / 2 - particlePointer.x;
+        const dy = rect.top + rect.height / 2 - particlePointer.y;
         const distance = Math.hypot(dx, dy);
-        if (!distance || distance > radius) {
-          particle.style.setProperty("--repel-x", "0px");
-          particle.style.setProperty("--repel-y", "0px");
-          continue;
-        }
+        if (!distance || distance > radius) return null;
         const force = ((radius - distance) / radius) ** 2 * maxOffset;
-        particle.style.setProperty("--repel-x", `${((dx / distance) * force).toFixed(2)}px`);
-        particle.style.setProperty("--repel-y", `${((dy / distance) * force).toFixed(2)}px`);
-      }
+        return {
+          x: `${((dx / distance) * force).toFixed(2)}px`,
+          y: `${((dy / distance) * force).toFixed(2)}px`,
+        };
+      });
+
+      particles.forEach((particle, index) => {
+        const dot = particle.firstElementChild;
+        if (!dot) return;
+        const offset = offsets[index];
+        dot.style.setProperty("--repel-x", offset ? offset.x : "0px");
+        dot.style.setProperty("--repel-y", offset ? offset.y : "0px");
+      });
     }
 
     function resetRepel() {
       particlePointer = null;
       if (!ui.particleLayer) return;
       for (const particle of ui.particleLayer.children) {
-        particle.style.setProperty("--repel-x", "0px");
-        particle.style.setProperty("--repel-y", "0px");
+        const dot = particle.firstElementChild;
+        if (!dot) continue;
+        dot.style.setProperty("--repel-x", "0px");
+        dot.style.setProperty("--repel-y", "0px");
       }
     }
 

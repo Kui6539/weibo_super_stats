@@ -54,7 +54,7 @@ window.WeiboCache = {
       if (result.md && result.md !== autoPreviewResultKey) {
         autoPreviewResultKey = result.md;
         previewController.load({ auto: true, mdPath: result.md }).then(() => {
-          window.dispatchEvent(new CustomEvent("weibo:preview-mode-change", { detail: { mode: "md" } }));
+          window.WeiboState.emit(window.WeiboState.TOPICS.PREVIEW_MODE_CHANGE, { mode: "md" });
         });
       }
     }
@@ -217,7 +217,7 @@ window.WeiboCache = {
       }
       if (event.target.closest("[data-preview-md]")) {
         previewController.load({ mdPath: autoPreviewResultKey }).then(() => {
-          window.dispatchEvent(new CustomEvent("weibo:preview-mode-change", { detail: { mode: "md" } }));
+          window.WeiboState.emit(window.WeiboState.TOPICS.PREVIEW_MODE_CHANGE, { mode: "md" });
         });
         return;
       }
@@ -227,13 +227,13 @@ window.WeiboCache = {
       }
       if (event.target.closest("[data-preview-image-report]")) {
         imagePreviewController?.show();
-        window.dispatchEvent(new CustomEvent("weibo:preview-mode-change", { detail: { mode: "pic" } }));
+        window.WeiboState.emit(window.WeiboState.TOPICS.PREVIEW_MODE_CHANGE, { mode: "pic" });
         return;
       }
       const imagePageButton = event.target.closest("[data-preview-image-page]");
       if (imagePageButton) {
         imagePreviewController?.showPage(imagePageButton.dataset.previewImagePage || 0);
-        window.dispatchEvent(new CustomEvent("weibo:preview-mode-change", { detail: { mode: "pic" } }));
+        window.WeiboState.emit(window.WeiboState.TOPICS.PREVIEW_MODE_CHANGE, { mode: "pic" });
       }
     }
 

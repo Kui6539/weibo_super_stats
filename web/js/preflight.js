@@ -6,6 +6,7 @@ window.WeiboPreflight = {
     const COLLAPSE_ANIMATION_MS = 280;
 
     let preflightPendingPayload = null;
+    let releaseFocus = () => {};
     let preflightCollapseTimer = null;
     let preflightCollapseFinishTimer = null;
     let preflightCollapsePromise = null;
@@ -206,12 +207,15 @@ window.WeiboPreflight = {
       controls.preflightProceed.textContent = canProceed ? "仍然开始" : "无法开始";
       ui.preflightOverlay.classList.add("visible");
       ui.preflightOverlay.setAttribute("aria-hidden", "false");
+      releaseFocus = window.WeiboUtils.trapFocus(ui.preflightOverlay?.querySelector('[role="dialog"]'));
     }
 
     function closeModal() {
       ui.preflightOverlay.classList.remove("visible");
       ui.preflightOverlay.setAttribute("aria-hidden", "true");
       preflightPendingPayload = null;
+      releaseFocus();
+      releaseFocus = () => {};
     }
 
     function pendingPayload() {

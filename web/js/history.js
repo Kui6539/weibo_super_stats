@@ -3,6 +3,8 @@ window.WeiboHistory = {
     let items = [];
     let dropdownOpen = false;
     let currentDetailItem = null;
+    let releaseDetailFocus = () => {};
+    let releasePreviewFocus = () => {};
 
     // Reads the history index instead of re-scanning output. load() runs on
     // every page open, every finished task and after each delete; scanning
@@ -272,12 +274,17 @@ window.WeiboHistory = {
         </div>`;
       ui.historyDetailOverlay.classList.add("visible");
       ui.historyDetailOverlay.setAttribute("aria-hidden", "false");
+      releaseDetailFocus = window.WeiboUtils.trapFocus(
+        ui.historyDetailOverlay.querySelector('[role="dialog"]'),
+      );
     }
 
     function closeDetail() {
       ui.historyDetailOverlay?.classList.remove("visible");
       ui.historyDetailOverlay?.setAttribute("aria-hidden", "true");
       currentDetailItem = null;
+      releaseDetailFocus();
+      releaseDetailFocus = () => {};
     }
 
     async function showPreview() {
@@ -287,6 +294,9 @@ window.WeiboHistory = {
       if (ui.historyPreviewPath) ui.historyPreviewPath.textContent = "";
       ui.historyPreviewOverlay.classList.add("visible");
       ui.historyPreviewOverlay.setAttribute("aria-hidden", "false");
+      releasePreviewFocus = window.WeiboUtils.trapFocus(
+        ui.historyPreviewOverlay.querySelector('[role="dialog"]'),
+      );
       try {
         const response = await api("/api/history/preview", {
           method: "POST",
@@ -319,6 +329,8 @@ window.WeiboHistory = {
     function closePreview() {
       ui.historyPreviewOverlay?.classList.remove("visible");
       ui.historyPreviewOverlay?.setAttribute("aria-hidden", "true");
+      releasePreviewFocus();
+      releasePreviewFocus = () => {};
     }
 
     function detailRow(label, value) {

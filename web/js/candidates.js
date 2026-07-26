@@ -1,6 +1,7 @@
 window.WeiboCandidates = {
   createController({ ui, controls, escapeHtml, escapeAttr, getCurrentJob }) {
     let candidateJobId = "";
+    let lastListKey = "";
     let candidateSelections = new Set();
     let candidateExpanded = new Set();
 
@@ -22,15 +23,23 @@ window.WeiboCandidates = {
         candidateExpanded = new Set();
       }
 
+      // The candidate set is fixed while the job waits for a pick, so only a
+      // changed job, filter or sort warrants rebuilding the list. Polling would
+      // otherwise redraw twenty cards every 2.5 seconds.
       const visible = filterAndSort(candidates);
-      ui.candidateList.innerHTML = visible.length
-        ? visible.map((item) => cardHtml(item)).join("")
-        : `<div class="empty-state">没有匹配的候选帖子</div>`;
+      const key = [job.id, candidates.length, controls.candidateFilter.value, controls.candidateSort.value].join("|");
+      if (key !== lastListKey) {
+        lastListKey = key;
+        ui.candidateList.innerHTML = visible.length
+          ? visible.map((item) => cardHtml(item)).join("")
+          : `<div class="empty-state">没有匹配的候选帖子</div>`;
+      }
       updatePickCount(job);
     }
 
     function reset() {
       candidateJobId = "";
+      lastListKey = "";
       candidateSelections = new Set();
       candidateExpanded = new Set();
     }
@@ -160,17 +169,20 @@ window.WeiboCandidates = {
       return [...candidateSelections].sort((a, b) => a - b);
     }
 
+    // Expanding or ticking a card used to re-render all twenty, which threw
+    // away the user's keyboard focus mid-interaction and rebuilt every
+    // thumbnail img. Both now patch just the card that changed.
     function handleClick(event) {
       const toggle = event.target.closest("[data-toggle-full]");
-      if (toggle) {
-        const index = Number(toggle.dataset.toggleFull);
-        if (candidateExpanded.has(index)) {
-          candidateExpanded.delete(index);
-        } else {
-          candidateExpanded.add(index);
-        }
-        render(getCurrentJob?.());
+      if (!toggle) return;
+      const index = Number(toggle.dataset.toggleFull);
+      const expanded = !candidateExpanded.has(index);
+      if (expanded) {
+        candidateExpanded.add(index);
+      } else {
+        candidateExpanded.delete(index);
       }
+      patchExpansion(index, expanded, toggle);
     }
 
     function handleChange(event) {
@@ -182,7 +194,47 @@ window.WeiboCandidates = {
       } else {
         candidateSelections.delete(index);
       }
-      render(getCurrentJob?.());
+      // Under the "已选"/"未选" filters a tick changes which cards belong in
+      // the list, so patching one card is not enough -- the set has to be
+      // recomputed.
+      if (filterDependsOnSelection()) {
+        lastListKey = "";
+        render(getCurrentJob?.());
+        return;
+      }
+      patchSelection(index, checkbox.checked);
+      updatePickCount(getCurrentJob?.());
+    }
+
+    function filterDependsOnSelection() {
+      return ["selected", "unselected"].includes(controls.candidateFilter.value);
+    }
+
+    function cardNode(index) {
+      return ui.candidateList.querySelector(`[data-index="${index}"]`);
+    }
+
+    function patchSelection(index, checked) {
+      const card = cardNode(index);
+      if (!card) return;
+      card.classList.toggle("selected", checked);
+      const badge = card.querySelector(".candidate-check .mini-badge");
+      if (badge) badge.textContent = checked ? "已选" : "未选";
+    }
+
+    function patchExpansion(index, expanded, toggle) {
+      const card = cardNode(index);
+      const item = (getCurrentJob?.()?.candidates || []).find((row) => Number(row.index) === index);
+      if (!card || !item) return;
+      const body = card.querySelector(".candidate-content");
+      if (body) {
+        const raw = expanded
+          ? item.content_full || item.content || ""
+          : item.content_excerpt || item.content || "";
+        body.textContent = cleanCandidateText(raw);
+        body.classList.toggle("expanded", expanded);
+      }
+      toggle.textContent = expanded ? "收起全文" : "展开全文";
     }
 
     function currentSelectedCount(job) {

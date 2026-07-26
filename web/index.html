@@ -89,7 +89,7 @@
           <span class="preview-toggle-text">预览</span>
           <span id="previewModeBadge" class="preview-mode-badge hidden" aria-hidden="true"></span>
         </button>
-        <div class="status-pill" id="statusPill">未开始</div>
+        <div class="status-pill" id="statusPill" role="status" aria-live="polite">未开始</div>
       </div>
     </header>
     <div id="historyBackdrop" class="history-backdrop" aria-hidden="true"></div>
@@ -297,7 +297,7 @@
             </div>
           </div>
 
-          <div class="progress-stack" id="logBox" aria-live="polite"></div>
+          <div class="progress-stack" id="logBox"></div>
         </section>
 
         <section id="resultPanel" class="panel result-panel hidden">
@@ -356,7 +356,7 @@
             <button id="clearLogViewBtn" type="button" class="secondary">清空显示</button>
             <button id="logBottomBtn" type="button" class="secondary">滚动到底部</button>
           </div>
-          <div id="backendLogBox" class="backend-log" aria-live="polite"></div>
+          <div id="backendLogBox" class="backend-log"></div>
         </section>
       </div>
 

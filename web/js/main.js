@@ -1,5 +1,22 @@
 const $ = window.WeiboUtils?.$ || ((id) => document.getElementById(id));
 
+// Report ids that index.html no longer has. Collecting them yields null
+// silently, and the failure only shows up later as a dead button or, before
+// events.js was split into isolated groups, as every later binding vanishing.
+// Naming them here turns "why doesn't this button work" into one console line.
+function reportMissingElements(groups) {
+  const missing = [];
+  for (const [groupName, group] of Object.entries(groups)) {
+    for (const [key, node] of Object.entries(group)) {
+      if (!node) missing.push(`${groupName}.${key}`);
+    }
+  }
+  if (missing.length) {
+    console.error(`[WeiboMain] index.html 缺少 ${missing.length} 个元素：${missing.join(", ")}`);
+  }
+  return missing;
+}
+
 const fields = {
   superTopic: $("superTopic"),
   issue: $("issue"),
@@ -150,6 +167,8 @@ const ui = {
   cleanupPreviewBox: $("cleanupPreviewBox"),
 };
 
+reportMissingElements({ fields, controls, ui });
+
 const setBusy = (...args) => window.WeiboUtils.setBusy(...args);
 const escapeHtml = (value) => window.WeiboUtils.escapeHtml(value);
 const escapeAttr = (value) => window.WeiboUtils.escapeAttr(value);
@@ -163,34 +182,10 @@ function setSaveState(text, state = "") {
   ui.saveState.dataset.state = state;
 }
 
-function api(path, options = {}) {
-  if (window.WeiboApi?.request) {
-    return window.WeiboApi.request(path, options);
-  }
-  const init = {
-    headers: { "Content-Type": "application/json" },
-    ...options,
-  };
-  return fetch(path, init).then(async (response) => {
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok || data.ok === false) {
-      throw new Error(formatApiError(data, response.status));
-    }
-    return data;
-  });
-}
-
-function formatApiError(data, status) {
-  if (window.WeiboApi?.formatError) {
-    return window.WeiboApi.formatError(data, status);
-  }
-  if (data && typeof data.error === "object" && data.error) {
-    const message = data.error.message || `请求失败：${status}`;
-    const suggestion = data.error.suggestion ? `建议：${data.error.suggestion}` : "";
-    return [message, suggestion].filter(Boolean).join("。");
-  }
-  return String(data?.error || `请求失败：${status}`);
-}
+// api.js is loaded before this file and always defines WeiboApi, so the
+// fallback implementations that used to live here were unreachable copies of
+// it -- two versions of the error formatting, only one of which ever ran.
+const api = (path, options = {}) => window.WeiboApi.request(path, options);
 
 const themeController = window.WeiboTheme.createController({
   controls,
@@ -381,8 +376,6 @@ taskController = window.WeiboTask.createController({
   logsController,
   candidatesController,
   cacheController,
-  presetController,
-  topicPreviewController,
   historyController,
   outputCleanupController,
   previewController,

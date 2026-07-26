@@ -55,4 +55,48 @@ window.WeiboUtils = {
       },
     };
   },
+
+  // Focus handling for elements marked role="dialog" aria-modal="true".
+  //
+  // Without it the attribute is a promise the page does not keep: Tab still
+  // walks the controls behind the overlay, and a screen reader is never told
+  // the dialog opened. help.js moved focus on open; the preflight, history
+  // detail and history preview dialogs did not.
+  //
+  // Returns a function that restores focus to whatever had it before.
+  trapFocus(dialog) {
+    if (!dialog) return () => {};
+    const previous = document.activeElement;
+    const selector =
+      'a[href], button:not([disabled]), textarea, input:not([type="hidden"]):not([disabled]), select, [tabindex]:not([tabindex="-1"])';
+
+    const focusable = () =>
+      Array.from(dialog.querySelectorAll(selector)).filter(
+        (node) => node.offsetParent !== null || node === document.activeElement,
+      );
+
+    const onKeydown = (event) => {
+      if (event.key !== "Tab") return;
+      const nodes = focusable();
+      if (!nodes.length) return;
+      const first = nodes[0];
+      const last = nodes[nodes.length - 1];
+      // Wrap at both ends so focus cannot escape to the page behind.
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    dialog.addEventListener("keydown", onKeydown);
+    (focusable()[0] || dialog).focus();
+
+    return () => {
+      dialog.removeEventListener("keydown", onKeydown);
+      if (previous && typeof previous.focus === "function") previous.focus();
+    };
+  },
 };
