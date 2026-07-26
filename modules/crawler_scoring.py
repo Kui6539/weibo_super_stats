@@ -50,13 +50,45 @@ def prepare_score_config(config: dict | Any) -> PreparedScoreConfig:
     )
 
 
-def calculate_time_weight(publish_dt: datetime | None, ref_now: datetime | None = None) -> float:
+# Default bias strength. The auto-calibration search in crawler.py sweeps this
+# from 0.00 to 1.20, so the formula has to stay parameterised -- it used to be
+# hardcoded here and duplicated there, which meant adjusting the floor or the
+# centre in one place silently desynchronised scoring from calibration.
+DEFAULT_TIME_WEIGHT_STRENGTH = 0.06
+
+# Posts older than this carry the full age penalty.
+TIME_WEIGHT_WINDOW_HOURS = 7.0 * 24.0
+
+# Floor, so an aggressive strength cannot bury old posts entirely.
+TIME_WEIGHT_FLOOR = 0.75
+TIME_WEIGHT_CENTRE = 1.01
+
+
+def time_age_ratio(publish_dt: datetime | None, now: datetime | None = None) -> float | None:
+    """How far through the scoring window a post is, clamped to [0, 1]."""
     if publish_dt is None:
+        return None
+    ref = now or datetime.now()
+    age_hours = max(0.0, (ref - publish_dt).total_seconds() / 3600.0)
+    return min(1.0, age_hours / TIME_WEIGHT_WINDOW_HOURS)
+
+
+def time_weight_from_age_ratio(
+    age_ratio: float | None,
+    strength: float = DEFAULT_TIME_WEIGHT_STRENGTH,
+) -> float:
+    if age_ratio is None:
         return 1.0
-    now = ref_now or datetime.now()
-    age_hours = max(0.0, (now - publish_dt).total_seconds() / 3600)
-    age_ratio = min(1.0, age_hours / (7.0 * 24.0))
-    return max(0.75, 1.01 + 0.06 * (0.5 - age_ratio))
+    s = max(0.0, float(strength))
+    return max(TIME_WEIGHT_FLOOR, TIME_WEIGHT_CENTRE + s * (0.5 - age_ratio))
+
+
+def calculate_time_weight(
+    publish_dt: datetime | None,
+    ref_now: datetime | None = None,
+    strength: float = DEFAULT_TIME_WEIGHT_STRENGTH,
+) -> float:
+    return time_weight_from_age_ratio(time_age_ratio(publish_dt, ref_now), strength)
 
 
 def calculate_score(post: dict, config: dict | Any) -> ScoreDetail:

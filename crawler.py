@@ -52,6 +52,9 @@ from modules.comments.ranking import build_comment_leaderboards as _comments_bui
 from modules.crawler_client import looks_like_weibo_visitor
 from modules.crawler_filters import should_exclude_post
 from modules.crawler_scoring import PreparedScoreConfig, calculate_score_values, prepare_score_config
+from modules.crawler_scoring import calculate_time_weight as _scoring_calculate_time_weight
+from modules.crawler_scoring import time_age_ratio as _scoring_time_age_ratio
+from modules.crawler_scoring import time_weight_from_age_ratio as _scoring_time_weight_from_age_ratio
 from modules.images.url_extract import collect_comment_image_urls as _image_collect_comment_image_urls
 from modules.images.url_extract import collect_top_comment_image_urls as _image_collect_top_comment_image_urls
 from modules.images.url_extract import dedup_image_urls as _image_dedup_image_urls
@@ -1151,37 +1154,6 @@ def parse_fm_view_objects(page_html: str) -> list[dict]:
     return _html_parse_fm_view_objects(page_html)
 
 
-def _skip_space(text: str, start: int) -> int:
-    i = start
-    while i < len(text) and text[i] in (" ", "\n", "\r", "\t"):
-        i += 1
-    return i
-
-
-def _find_json_object_end(text: str, obj_start: int) -> int:
-    depth = 0
-    in_string = False
-    escaped = False
-    for i, ch in enumerate(text[obj_start:], start=obj_start):
-        if in_string:
-            if escaped:
-                escaped = False
-            elif ch == "\\":
-                escaped = True
-            elif ch == '"':
-                in_string = False
-            continue
-        if ch == '"':
-            in_string = True
-        elif ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0:
-                return i
-    return -1
-
-
 def parse_posts_from_html(html: str) -> list[dict]:
     return _html_parse_posts_from_html(html)
 
@@ -1227,13 +1199,6 @@ def parse_publish_datetime(text: str) -> datetime | None:
     return parse_weibo_time(text)
 
 
-def _parse_publish_datetime_with_format(raw: str, fmt: str) -> datetime | None:
-    try:
-        return datetime.strptime(raw, fmt)
-    except ValueError:
-        return None
-
-
 def _apply_carryover_bucket(publish_dt: datetime | None, carryover_hours: int) -> datetime | None:
     """把截止前若干小时的帖子顺延到下一期（通过归档时间平移实现）。"""
     if publish_dt is None:
@@ -1254,26 +1219,11 @@ def _bounded_worker_count(requested: int | None, total: int) -> int:
     return max(1, min(desired, total, 12))
 
 
-def _calc_time_weight(publish_dt: datetime | None, now: datetime, strength: float = 0.06) -> float:
-    """轻量时间权重：strength 越大，时间偏置越强。"""
-    return _time_weight_from_age_ratio(_time_age_ratio(publish_dt, now), strength)
-
-
-def _time_age_ratio(publish_dt: datetime | None, now: datetime) -> float | None:
-    if publish_dt is None:
-        return None
-    age_hours = max(0.0, (now - publish_dt).total_seconds() / 3600.0)
-    return min(1.0, age_hours / (7.0 * 24.0))
-
-
-def _time_weight_from_age_ratio(age_ratio: float | None, strength: float = 0.06) -> float:
-    if age_ratio is None:
-        return 1.0
-    # 中心约 1.01；strength=0.06 时范围约 [1.04, 0.98]
-    # 为避免极端强度时旧帖权重过低，设置下限保护。
-    s = max(0.0, float(strength))
-    weight = 1.01 + s * (0.5 - age_ratio)
-    return max(0.75, weight)
+# Forwarding shims: the formula lives in modules.crawler_scoring so the scoring
+# path and the calibration search cannot drift apart.
+_calc_time_weight = _scoring_calculate_time_weight
+_time_age_ratio = _scoring_time_age_ratio
+_time_weight_from_age_ratio = _scoring_time_weight_from_age_ratio
 
 
 def _should_replace_content(old_text: str, new_text: str) -> bool:
@@ -1664,10 +1614,6 @@ def _to_rel_path(base_dir: Path, target: Path) -> str:
     return _report_to_rel_path(base_dir, target)
 
 
-def _report_divider_line() -> str:
-    return "─" * 25
-
-
 def _select_weekly_posts(posts: Iterable[dict], limit: int = 15) -> list[dict]:
     return _report_select_weekly_posts(posts, limit=limit)
 
@@ -1777,12 +1723,6 @@ def _replace_weibo_emoticons(text: str) -> str:
 
 def _replace_unicode_emoji(text: str) -> str:
     return _report_replace_unicode_emoji(text)
-
-
-def _first_text(elements: list) -> str:
-    if not elements:
-        return ""
-    return elements[0].get_text(" ", strip=True)
 
 
 def _clean_text(text: str) -> str:

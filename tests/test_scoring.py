@@ -53,3 +53,44 @@ class ScoringTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TimeWeightSingleSourceTests(unittest.TestCase):
+    """The formula lives in one place now; crawler.py only forwards to it.
+
+    It used to exist twice -- parameterised in crawler.py for the calibration
+    sweep, hardcoded at strength 0.06 in modules/crawler_scoring. Adjusting the
+    0.75 floor or the 1.01 centre in one copy would have silently desynced
+    scoring from calibration.
+    """
+
+    def test_crawler_names_forward_to_the_shared_implementation(self) -> None:
+        import crawler
+        from modules.crawler_scoring import (
+            calculate_time_weight,
+            time_age_ratio,
+            time_weight_from_age_ratio,
+        )
+
+        self.assertIs(crawler._calc_time_weight, calculate_time_weight)
+        self.assertIs(crawler._time_age_ratio, time_age_ratio)
+        self.assertIs(crawler._time_weight_from_age_ratio, time_weight_from_age_ratio)
+
+    def test_default_strength_reproduces_the_original_values(self) -> None:
+        from datetime import datetime, timedelta
+
+        from modules.crawler_scoring import calculate_time_weight
+
+        now = datetime(2026, 7, 26, 12, 0, 0)
+        for days, expected in ((0, 1.04), (3.5, 1.01), (7, 0.98)):
+            with self.subTest(days=days):
+                self.assertAlmostEqual(calculate_time_weight(now - timedelta(days=days), now), expected, places=6)
+        self.assertEqual(calculate_time_weight(None, now), 1.0)
+
+    def test_the_floor_holds_at_aggressive_strengths(self) -> None:
+        from datetime import datetime, timedelta
+
+        from modules.crawler_scoring import calculate_time_weight
+
+        now = datetime(2026, 7, 26, 12, 0, 0)
+        self.assertEqual(calculate_time_weight(now - timedelta(days=7), now, strength=1.2), 0.75)
