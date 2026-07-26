@@ -2,14 +2,17 @@ from __future__ import annotations
 
 import json
 import shutil
+import threading
 from datetime import datetime
+from functools import wraps
 from pathlib import Path
 from typing import Any
 
+from core.atomic_io import atomic_write_json
 from core.cache import CacheStore, read_manifest, sanitize_for_cache
 from core.config import load_saved_config
 from core.errors import ConfigError
-from core.paths import is_relative_to, normalize_output_dir
+from core.paths import RUN_DIR_RE, is_relative_to, normalize_output_dir
 from modules.topic import build_report_title, format_report_title_with_issue, normalize_issue_value
 from modules.weibo_url import parse_super_topic_id
 
@@ -17,7 +20,22 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 HISTORY_PATH = ROOT_DIR / "weibo_stats_history.json"
 HISTORY_VERSION = 1
 
+# The crawl worker appends a history item as its last step while HTTP threads
+# may be scanning or removing entries; without this every load->modify->save
+# pair can drop the other side's update.
+_HISTORY_LOCK = threading.RLock()
 
+
+def _locked(fn):
+    @wraps(fn)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        with _HISTORY_LOCK:
+            return fn(*args, **kwargs)
+
+    return wrapper
+
+
+@_locked
 def load_history(path: Path | None = None) -> dict[str, Any]:
     history_path = path or HISTORY_PATH
     if not history_path.exists():
@@ -32,13 +50,15 @@ def load_history(path: Path | None = None) -> dict[str, Any]:
         return _empty_history()
 
 
+@_locked
 def save_history(history: dict[str, Any], path: Path | None = None) -> dict[str, Any]:
     history_path = path or HISTORY_PATH
     clean = sanitize_history(history)
-    history_path.write_text(json.dumps(clean, ensure_ascii=False, indent=2, default=str) + "\n", encoding="utf-8")
+    atomic_write_json(history_path, clean)
     return clean
 
 
+@_locked
 def add_history_item_from_manifest(report_dir: Path, manifest: dict[str, Any]) -> dict[str, Any]:
     history = load_history()
     item = history_item_from_manifest(report_dir, manifest)
@@ -278,12 +298,22 @@ def _history_title_with_issue(
 def _resolve_output_root(output_dir: str | Path) -> Path:
     path = Path(output_dir or "output").expanduser()
     path = (ROOT_DIR / path).resolve() if not path.is_absolute() else path.resolve()
-    default_output = (ROOT_DIR / "output").resolve()
-    configured_output = normalize_output_dir(load_saved_config().get("output_dir") or "output").resolve()
-    allowed_roots = {ROOT_DIR.resolve(), default_output, configured_output}
-    if not any(is_relative_to(path, root) for root in allowed_roots):
+    if not any(is_relative_to(path, root) for root in _allowed_output_roots()):
         raise ConfigError("输出目录不在允许范围内", "历史扫描只能读取项目 output 或配置的导出目录。")
     return path
+
+
+def _allowed_output_roots() -> set[Path]:
+    """Roots a history entry may live under.
+
+    Deliberately excludes ROOT_DIR itself: with the project root allowed,
+    ``output_dir="."`` pulls every directory in the repo that happens to hold a
+    manifest.json into the history index, and those entries then feed the
+    preview and reexport endpoints.
+    """
+    default_output = (ROOT_DIR / "output").resolve()
+    configured_output = normalize_output_dir(load_saved_config().get("output_dir") or "output").resolve()
+    return {default_output, configured_output}
 
 
 def _resolve_report_dir(value: Any) -> Path:
@@ -292,9 +322,10 @@ def _resolve_report_dir(value: Any) -> Path:
         raise ConfigError("历史任务目录为空", "请重新扫描 output。")
     path = Path(text).expanduser()
     path = (ROOT_DIR / path).resolve() if not path.is_absolute() else path.resolve()
-    default_output = (ROOT_DIR / "output").resolve()
-    if not is_relative_to(path, default_output) and not is_relative_to(path, ROOT_DIR.resolve()):
+    if not any(is_relative_to(path, root) for root in _allowed_output_roots()):
         raise ConfigError("历史任务目录不在允许范围内", "请重新扫描 output。")
+    if not RUN_DIR_RE.match(path.name):
+        raise ConfigError("历史任务目录名无效", "请重新扫描 output。")
     return path
 
 

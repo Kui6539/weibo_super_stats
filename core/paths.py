@@ -5,6 +5,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+# Timestamped run directory name, e.g. 20260601_184009. Single source of truth
+# for every place that has to decide "is this a run directory the tool created"
+# before reading, writing or deleting it.
+RUN_DIR_RE = re.compile(r"^\d{8}_\d{6}$")
+
 
 def is_relative_to(child: Path, parent: Path) -> bool:
     try:

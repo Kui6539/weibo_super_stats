@@ -9,16 +9,14 @@ from typing import Any
 from core.cache import CacheStore, read_manifest, sanitize_for_cache
 from core.errors import ConfigError
 from core.history import ROOT_DIR
-from core.paths import is_relative_to
-
-RUN_DIR_RE = re.compile(r"^\d{8}_\d{6}$")
+from core.paths import RUN_DIR_RE, is_relative_to
 
 
 def output_summary(output_dir: str | Path = "output") -> dict[str, Any]:
     root = resolve_output_root(output_dir)
     run_dirs = list_run_dirs(root)
-    total_size = sum(_dir_size(path) for path in run_dirs)
     rows = [_summarize_run_dir(path) for path in run_dirs]
+    total_size = sum(int(row.get("size") or 0) for row in rows)
     return sanitize_for_cache(
         {
             "output_dir": _rel_project(root),
@@ -183,13 +181,62 @@ def cleanup_output(
         return {**preview, "deleted": False, "message": "未确认删除，仅返回预览。"}
     root = resolve_output_root(output_dir)
     deleted: list[str] = []
+    deleted_caches: list[str] = []
+    errors: list[str] = []
     for item in list(preview.get("items") or []):
         run_dir = (ROOT_DIR / str(item.get("report_dir") or "")).resolve()
         if not is_relative_to(run_dir, root) or not RUN_DIR_RE.match(run_dir.name):
             continue
-        shutil.rmtree(run_dir, ignore_errors=False)
+        # A locked file in one run directory must not abort the whole batch:
+        # earlier entries are already gone and the caller would otherwise get a
+        # single opaque error with no idea what was removed.
+        try:
+            shutil.rmtree(run_dir, ignore_errors=False)
+        except OSError as err:
+            errors.append(f"{_rel_project(run_dir)}: {type(err).__name__}")
+            continue
         deleted.append(_rel_project(run_dir))
-    return {**preview, "deleted": True, "deleted_dirs": deleted, "message": f"已删除 {len(deleted)} 个运行目录。"}
+        cache_dir = _project_cache_dir_for(run_dir)
+        if not cache_dir:
+            continue
+        try:
+            shutil.rmtree(cache_dir, ignore_errors=False)
+        except OSError as err:
+            errors.append(f"{_rel_project(cache_dir)}: {type(err).__name__}")
+            continue
+        deleted_caches.append(_rel_project(cache_dir))
+    message = f"已删除 {len(deleted)} 个运行目录。"
+    if deleted_caches:
+        message += f"同时清理了 {len(deleted_caches)} 个缓存目录。"
+    if errors:
+        message += f"{len(errors)} 项删除失败（文件可能正被打开）。"
+    return {
+        **preview,
+        "deleted": True,
+        "deleted_dirs": deleted,
+        "deleted_cache_dirs": deleted_caches,
+        "errors": errors,
+        "message": message,
+    }
+
+
+def _project_cache_dir_for(run_dir: Path) -> Path | None:
+    """The project-root cache directory belonging to *run_dir*, if safe to drop.
+
+    Deleting an output directory used to orphan its cache: tens of megabytes of
+    comment JSON and thumbnails with no UI left to reach them. Guarded the same
+    way as the output side — must sit directly under the cache root and carry a
+    run-directory name.
+    """
+    store = CacheStore(run_dir)
+    cache_dir = store.project_cache_dir.resolve()
+    if not cache_dir.exists() or not cache_dir.is_dir():
+        return None
+    if cache_dir.name != run_dir.name or not RUN_DIR_RE.match(cache_dir.name):
+        return None
+    if cache_dir.parent != store.cache_root.resolve():
+        return None
+    return cache_dir
 
 
 def list_run_dirs(root: Path) -> list[Path]:
@@ -210,17 +257,25 @@ def resolve_output_root(output_dir: str | Path) -> Path:
 
 def _summarize_run_dir(run_dir: Path) -> dict[str, Any]:
     manifest = read_manifest(run_dir, {}) or {}
-    cache_status = CacheStore(run_dir).get_cache_status()
+    store = CacheStore(run_dir)
+    cache_status = store.get_cache_status()
     warnings = manifest.get("warnings") if isinstance(manifest, dict) else []
     output_status = _output_files_status(run_dir, manifest if isinstance(manifest, dict) else {})
+    # rglob is the expensive part here; walk each tree once and reuse the total.
+    output_size = _dir_size(run_dir)
+    cache_dir = store.project_cache_dir
+    cache_size = _dir_size(cache_dir) if cache_dir.exists() and cache_dir != run_dir else 0
+    size = output_size + cache_size
     return {
         "run_id": run_dir.name,
         "report_dir": _rel_project(run_dir),
         "status": str(manifest.get("status") or "unknown") if isinstance(manifest, dict) else "unknown",
         "created_at": str(manifest.get("created_at") or _run_time_text(run_dir)) if isinstance(manifest, dict) else _run_time_text(run_dir),
         "updated_at": str(manifest.get("updated_at") or "") if isinstance(manifest, dict) else "",
-        "size": _dir_size(run_dir),
-        "size_mb": round(_dir_size(run_dir) / 1024 / 1024, 2),
+        "size": size,
+        "size_mb": round(size / 1024 / 1024, 2),
+        "output_size": output_size,
+        "cache_size": cache_size,
         "has_cache": bool(cache_status.get("has_cache")),
         "can_reexport": bool(cache_status.get("can_reexport")),
         "output_files_known": bool(output_status.get("known")),

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
-import shutil
+import re
+import threading
 from copy import deepcopy
 from datetime import datetime, timedelta
+from functools import wraps
 from pathlib import Path
 from typing import Any
 
+from core.atomic_io import atomic_write_json
 from core.crawl_types import CrawlConfig
 from core.errors import ConfigError
 from core.paths import is_writable_dir, normalize_output_dir
@@ -20,6 +23,21 @@ DEFAULT_SUPER_TOPIC = "https://weibo.com/p/1008080c5ef5dee7defd2f23ad650e8433931
 
 CONFIG_VERSION = 3
 DEFAULT_PRESET_ID = "default"
+
+# Serializes every load->modify->save sequence. The HTTP server runs one thread
+# per request and the crawl worker writes config too, so unguarded read-modify-
+# write sequences lose updates. Reentrant because save_user_config and the
+# preset helpers all call save_config while holding it.
+_CONFIG_LOCK = threading.RLock()
+
+
+def _locked(fn):
+    @wraps(fn)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        with _CONFIG_LOCK:
+            return fn(*args, **kwargs)
+
+    return wrapper
 
 DEFAULT_PRESET: dict[str, Any] = {
     "name": "默认预设",
@@ -98,6 +116,7 @@ def _parse_datetime_with_format(text: str, fmt: str) -> datetime | None:
         return None
 
 
+@_locked
 def load_config() -> dict[str, Any]:
     if not CONFIG_PATH.exists():
         return deepcopy(DEFAULT_CONFIG)
@@ -169,12 +188,14 @@ def migrate_config(config: dict[str, Any]) -> dict[str, Any]:
     return migrated
 
 
+@_locked
 def save_config(config: dict[str, Any]) -> dict[str, Any]:
     clean = migrate_config(config)
-    CONFIG_PATH.write_text(json.dumps(clean, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    atomic_write_json(CONFIG_PATH, clean)
     return clean
 
 
+@_locked
 def save_user_config(payload: dict[str, Any]) -> dict[str, Any]:
     current = load_config()
     active = str(current.get("active_preset") or DEFAULT_PRESET_ID)
@@ -204,6 +225,7 @@ def save_user_config(payload: dict[str, Any]) -> dict[str, Any]:
     return _strip_config_for_ui(flatten_active_config(save_config(current)))
 
 
+@_locked
 def clear_config(scope: str) -> dict[str, Any]:
     clean_scope = scope if scope in {"cookie", "all"} else ""
     if not clean_scope:
@@ -214,10 +236,30 @@ def clear_config(scope: str) -> dict[str, Any]:
         save_config(current)
         return app_defaults()
 
-    if CONFIG_PATH.exists():
-        shutil.copy2(CONFIG_PATH, CONFIG_PATH.with_name("weibo_stats_config.backup.json"))
+    _write_config_backup(CONFIG_PATH.with_name("weibo_stats_config.backup.json"))
     save_config(deepcopy(DEFAULT_CONFIG))
     return app_defaults()
+
+
+def _write_config_backup(backup_path: Path) -> None:
+    """Snapshot the current config without the cookie.
+
+    A byte copy would put a live weibo login token in a second file, and that
+    file is one stray ``git add`` away from the repository. The backup exists so
+    a user can recover presets, which do not need the credential.
+    """
+    if not CONFIG_PATH.exists():
+        return
+    try:
+        raw = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    if isinstance(raw, dict) and isinstance(raw.get("global"), dict):
+        raw["global"] = {**raw["global"], "cookie": ""}
+    try:
+        atomic_write_json(backup_path, raw)
+    except OSError:
+        return
 
 
 def validate_config_payload(payload: dict[str, Any]) -> list[dict[str, str]]:
@@ -467,6 +509,7 @@ def get_presets_payload() -> dict[str, Any]:
     }
 
 
+@_locked
 def save_preset(preset_id: str, preset: dict[str, Any]) -> dict[str, Any]:
     config = load_config()
     clean_id = _normalize_preset_id(preset_id or preset.get("id") or preset.get("name") or DEFAULT_PRESET_ID)
@@ -476,6 +519,7 @@ def save_preset(preset_id: str, preset: dict[str, Any]) -> dict[str, Any]:
     return get_presets_payload()
 
 
+@_locked
 def delete_preset(preset_id: str) -> dict[str, Any]:
     config = load_config()
     presets = config.setdefault("presets", {})
@@ -491,6 +535,7 @@ def delete_preset(preset_id: str) -> dict[str, Any]:
     return get_presets_payload()
 
 
+@_locked
 def activate_preset(preset_id: str) -> dict[str, Any]:
     config = load_config()
     clean_id = _normalize_preset_id(preset_id)
@@ -501,6 +546,7 @@ def activate_preset(preset_id: str) -> dict[str, Any]:
     return get_presets_payload()
 
 
+@_locked
 def duplicate_preset(source_id: str, new_id: str | None = None, name: str | None = None) -> dict[str, Any]:
     config = load_config()
     source = _normalize_preset_id(source_id)
@@ -599,10 +645,20 @@ def _normalize_preset_id(value: Any) -> str:
 
 
 def _backup_broken_config() -> None:
+    """Keep a copy of an unparsable config so presets can be recovered by hand.
+
+    Read as raw text (it failed to parse, so ``_write_config_backup`` cannot be
+    reused) and strip anything that looks like a cookie value line.
+    """
     if not CONFIG_PATH.exists():
         return
     backup = CONFIG_PATH.with_name("weibo_stats_config.broken.json")
     try:
-        shutil.copy2(CONFIG_PATH, backup)
+        raw = CONFIG_PATH.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return
+    scrubbed = re.sub(r'("cookie"\s*:\s*")[^"]*(")', r"\1\2", raw)
+    try:
+        backup.write_text(scrubbed, encoding="utf-8")
     except OSError:
         return
