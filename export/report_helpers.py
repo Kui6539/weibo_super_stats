@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from modules.crawler_filters import should_exclude_post
+from modules.post_normalizer import split_multi_value
 from modules.text_cleaning import (
     clean_topic_tags,
     collapse_blank_lines,
@@ -31,10 +32,17 @@ def format_posts_date_range(posts: list[dict[str, Any]]) -> str:
 
 
 def split_multi_values(text: str, sep: str = "|") -> list[str]:
-    raw = str(text or "")
-    if not raw:
-        return []
-    parts = [part.strip() for part in raw.split(sep)]
+    """Split a "|"-joined field, delegating to the shared normalizer.
+
+    This used to be its own implementation that ignored list input and did not
+    treat newlines as separators, so a newline-separated image path field came
+    out empty in Markdown and the long-image report while DOCX and Excel read
+    it fine. Every caller passes the default separator; the parameter is kept
+    so any other value still behaves as before.
+    """
+    if sep == "|":
+        return split_multi_value(text)
+    parts = [part.strip() for part in str(text or "").split(sep)]
     return [part for part in parts if part]
 
 

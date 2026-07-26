@@ -26,6 +26,7 @@ from export.report_helpers import (
     iter_report_comments,
     select_weekly_posts,
 )
+from modules.post_normalizer import split_multi_value
 
 DEFAULT_REPORT_TITLE = "微博超话周报"
 
@@ -61,12 +62,7 @@ def _post_image_bytes(post: dict[str, Any]) -> int:
     return total
 
 
-def _split_image_paths(value: Any) -> list[str]:
-    if isinstance(value, list):
-        parts = [str(item).strip() for item in value]
-    else:
-        parts = [part.strip() for part in str(value or "").replace("\n", "|").split("|")]
-    return [part for part in parts if part]
+_split_image_paths = split_multi_value
 
 
 def export_docx(ctx: ExportContext, path: Path | None = None, max_bytes: int = DOCX_SIZE_LIMIT_BYTES) -> list[Path]:

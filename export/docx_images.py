@@ -6,6 +6,8 @@ from typing import Any
 from docx.document import Document as DocxDocument
 from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
 
+from modules.post_normalizer import split_multi_value
+
 
 def add_post_images(document: DocxDocument, post: dict[str, Any], ctx: Any) -> None:
     for image_path in _split_paths(post.get("image_local_paths")):
@@ -42,9 +44,4 @@ def _add_scaled_right_aligned_picture(document: DocxDocument, image_path: str, s
             ctx.warnings.append(f"DOCX 图片插入失败：{type(err).__name__}")
 
 
-def _split_paths(value: Any) -> list[str]:
-    if isinstance(value, list):
-        parts = [str(item).strip() for item in value]
-    else:
-        parts = [part.strip() for part in str(value or "").replace("\n", "|").split("|")]
-    return [part for part in parts if part]
+_split_paths = split_multi_value

@@ -5,6 +5,8 @@ from typing import Any
 
 from openpyxl.drawing.image import Image as XLImage
 
+from modules.post_normalizer import split_multi_value
+
 
 def add_images_to_sheet(sheet, post: dict[str, Any], row_index: int, first_image_col: int, image_count: int) -> None:
     image_paths = get_embed_image_paths(post)
@@ -48,12 +50,7 @@ def get_embed_image_paths(post: dict[str, Any]) -> list[str]:
     return _dedup(post_paths + comment_paths)
 
 
-def _split_multi_paths(value: Any) -> list[str]:
-    if isinstance(value, list):
-        parts = [str(item).strip() for item in value]
-    else:
-        parts = [part.strip() for part in str(value or "").replace("\n", "|").split("|")]
-    return [part for part in parts if part]
+_split_multi_paths = split_multi_value
 
 
 def _dedup(values: list[str]) -> list[str]:

@@ -65,12 +65,25 @@ def serialize_post_for_frontend(post: dict[str, Any], index: int = 0) -> dict[st
     }
 
 
-def _split_multi(value: Any) -> list[str]:
+def split_multi_value(value: Any) -> list[str]:
+    """Split a multi-valued post field into its parts.
+
+    Fields like ``image_local_paths`` and ``original_image_urls`` are either a
+    list or a "|"-joined string, and newlines appear as separators too. This
+    used to be reimplemented in eight places; the copy in report_helpers did
+    not accept lists and did not treat newlines as separators, so a
+    newline-separated path field parsed in DOCX and Excel but came out empty in
+    Markdown and the long-image report.
+    """
     if isinstance(value, list):
         parts = [str(item).strip() for item in value]
     else:
         parts = [part.strip() for part in re.split(r"\s*\|\s*|\n+", str(value or ""))]
     return [part for part in parts if part]
+
+
+# Retained for the module's own older call sites.
+_split_multi = split_multi_value
 
 
 def _compact(value: str, max_chars: int) -> str:

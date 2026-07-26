@@ -18,6 +18,7 @@ from export.markdown_exporter import export_weekly_report_md
 from export.summary_exporter import analyze_active_period, build_summary, write_summary_txt
 from export.weibo_body_exporter import export_weibo_body
 from modules.comments.ranking import build_comment_leaderboards
+from modules.post_normalizer import split_multi_value
 from modules.topic import build_report_title, format_report_title_with_issue, normalize_report_title
 
 DEFAULT_EXPORT_TYPES = {"markdown", "docx", "excel", "csv", "summary", "weibo_body", "long_images"}
@@ -401,12 +402,7 @@ def _collect_missing_image_warnings(run_dir: Path, posts: list[dict]) -> list[st
     return [f"有 {missing} 个本地图片路径不存在，报告已继续生成，请检查 images 目录。"]
 
 
-def _split_paths(value: Any) -> list[str]:
-    if isinstance(value, list):
-        rows = [str(item).strip() for item in value]
-    else:
-        rows = [part.strip() for part in str(value or "").replace("\n", "|").split("|")]
-    return [item for item in rows if item]
+_split_paths = split_multi_value
 
 
 def _manifest_to_result(run_dir: Path, manifest: dict[str, Any]) -> dict[str, Any]:

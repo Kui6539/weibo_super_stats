@@ -45,6 +45,8 @@ from export.summary_exporter import analyze_active_period, build_summary
 from export.weibo_body_exporter import export_weibo_body
 from modules.comments.ranking import build_comment_leaderboards
 from modules.images.candidate_thumbnails import build_candidate_thumbnails
+from modules.images.manifest import build_images_manifest
+from modules.post_normalizer import split_multi_value as _normalizer_split_multi_value
 from modules.text_cleaning import remove_weibo_private_chars
 from modules.topic import build_report_title, format_report_title_with_issue
 
@@ -92,12 +94,8 @@ def to_float(value: Any) -> float:
         return 0.0
 
 
-def split_multi_value(value: Any) -> list[str]:
-    if isinstance(value, list):
-        rows = [str(item).strip() for item in value]
-    else:
-        rows = [part.strip() for part in re.split(r"\s*\|\s*|\n+", str(value or ""))]
-    return [item for item in rows if item]
+# Shared with the export and image layers; see modules.post_normalizer.
+split_multi_value = _normalizer_split_multi_value
 
 
 def serialize_candidate(post: dict, index: int) -> dict[str, Any]:
@@ -154,60 +152,6 @@ def count_downloaded_images(posts: list[dict]) -> int:
             )
         total += sum(1 for path in paths if Path(path).exists())
     return total
-
-
-def build_images_manifest(run_dir: Path, posts: list[dict]) -> dict[str, Any]:
-    success: list[dict[str, Any]] = []
-    failed: list[dict[str, Any]] = []
-
-    def rel(path_text: str) -> str:
-        path = Path(path_text)
-        try:
-            return str(path.resolve().relative_to(run_dir.resolve())).replace("\\", "/")
-        except Exception:
-            return str(path_text).replace("\\", "/")
-
-    def add_rows(post: dict, urls: list[str], paths: list[str], image_type: str) -> None:
-        post_id = str(post.get("post_id") or "")
-        for index, path_text in enumerate(paths):
-            path = Path(path_text)
-            row = {
-                "post_id": post_id,
-                "type": image_type,
-                "url": urls[index] if index < len(urls) else "",
-                "local_path": rel(path_text),
-            }
-            if path.exists():
-                success.append(row)
-            else:
-                failed.append(row)
-        if len(urls) > len(paths):
-            failed.extend(
-                {"post_id": post_id, "type": image_type, "url": url, "local_path": ""}
-                for url in urls[len(paths):]
-            )
-
-    for post in posts:
-        add_rows(
-            post,
-            split_multi_value(post.get("original_image_urls")),
-            split_multi_value(post.get("image_local_paths")),
-            "post_image",
-        )
-        for comment in list(post.get("top_comments_data") or []):
-            add_rows(
-                post,
-                split_multi_value(comment.get("image_urls")),
-                split_multi_value(comment.get("image_local_paths")),
-                "comment_image",
-            )
-    return {
-        "schema_version": 1,
-        "success": success,
-        "failed": failed,
-        "success_count": len(success),
-        "failed_count": len(failed),
-    }
 
 
 class CrawlJob:

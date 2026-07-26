@@ -6,6 +6,8 @@ from typing import Any
 
 import requests
 
+from modules.post_normalizer import split_multi_value
+
 from .collect import collect_comment_images, collect_post_images
 from .paths import build_image_filename, build_image_folder_name
 
@@ -87,9 +89,4 @@ def _download_collected(item: dict[str, Any], post_dir: Path, client: Any = None
         return {**item, "ok": False, "error": f"{type(err).__name__}: {err}"}
 
 
-def _split_paths(value: Any) -> list[str]:
-    if isinstance(value, list):
-        parts = [str(item).strip() for item in value]
-    else:
-        parts = [part.strip() for part in str(value or "").replace("\n", "|").split("|")]
-    return [part for part in parts if part]
+_split_paths = split_multi_value
