@@ -29,6 +29,45 @@ from export.report_helpers import (
 
 DEFAULT_REPORT_TITLE = "微博超话周报"
 
+# A .docx is a zip, and JPEG/PNG bytes do not compress further inside it, so
+# the embedded image files dominate the output size. These cover the XML and
+# text around them, deliberately generous -- overestimating only costs one
+# extra real save near the boundary, while underestimating would let a part
+# exceed the limit.
+_DOCX_BASE_OVERHEAD_BYTES = 40 * 1024
+_DOCX_PER_POST_OVERHEAD_BYTES = 8 * 1024
+_DOCX_LEADERBOARD_OVERHEAD_BYTES = 24 * 1024
+
+
+def _estimate_docx_bytes(rows: list[dict[str, Any]], include_leaderboards: bool) -> int:
+    """Approximate the saved size of a document holding *rows*."""
+    total = _DOCX_BASE_OVERHEAD_BYTES
+    if include_leaderboards:
+        total += _DOCX_LEADERBOARD_OVERHEAD_BYTES
+    for post in rows:
+        total += _DOCX_PER_POST_OVERHEAD_BYTES + _post_image_bytes(post)
+    return total
+
+
+def _post_image_bytes(post: dict[str, Any]) -> int:
+    total = 0
+    for image_path in _split_image_paths(post.get("image_local_paths")):
+        with suppress(OSError):
+            total += Path(image_path).stat().st_size
+    for comment in iter_report_comments(post):
+        for image_path in _split_image_paths(comment.get("image_local_paths")):
+            with suppress(OSError):
+                total += Path(image_path).stat().st_size
+    return total
+
+
+def _split_image_paths(value: Any) -> list[str]:
+    if isinstance(value, list):
+        parts = [str(item).strip() for item in value]
+    else:
+        parts = [part.strip() for part in str(value or "").replace("\n", "|").split("|")]
+    return [part for part in parts if part]
+
 
 def export_docx(ctx: ExportContext, path: Path | None = None, max_bytes: int = DOCX_SIZE_LIMIT_BYTES) -> list[Path]:
     return export_weekly_report_docx(
@@ -67,35 +106,47 @@ def export_weekly_report_docx(
     current: list[dict[str, Any]] = []
     trial_path = docx_path.with_name(f"_{docx_path.stem}_trial{docx_path.suffix}")
     limit = max(1, int(max_bytes or DOCX_SIZE_LIMIT_BYTES))
+    # Only measure for real when the estimate says we are near the boundary.
+    # Rebuilding and saving the whole document once per post -- re-reading and
+    # re-embedding every image already added -- made a 15-post export do 16+
+    # full builds and write hundreds of megabytes of throwaway trial files.
+    check_threshold = limit * 0.9
 
-    for post in rows:
-        trial_rows = current + [post]
-        document = build_docx_document(
-            export_ctx,
-            trial_rows,
-            title=title,
-            leaderboards=board,
-            include_leaderboards=(len(parts) == 0),
-        )
-        document.save(str(trial_path))
-        trial_size = trial_path.stat().st_size if trial_path.exists() else 0
+    try:
+        for post in rows:
+            trial_rows = current + [post]
+            estimated_with_post = _estimate_docx_bytes(trial_rows, include_leaderboards=(len(parts) == 0))
+            over_limit = False
+            if estimated_with_post > check_threshold and current:
+                document = build_docx_document(
+                    export_ctx,
+                    trial_rows,
+                    title=title,
+                    leaderboards=board,
+                    include_leaderboards=(len(parts) == 0),
+                )
+                document.save(str(trial_path))
+                over_limit = (trial_path.stat().st_size if trial_path.exists() else 0) > limit
+                with suppress(Exception):
+                    trial_path.unlink(missing_ok=True)
+
+            if over_limit:
+                out_path = numbered_docx_path(docx_path, len(parts) + 1)
+                document = build_docx_document(
+                    export_ctx,
+                    current,
+                    title=title,
+                    leaderboards=board,
+                    include_leaderboards=(len(parts) == 0),
+                )
+                document.save(str(out_path))
+                parts.append(out_path)
+                current = [post]
+            else:
+                current = trial_rows
+    finally:
         with suppress(Exception):
             trial_path.unlink(missing_ok=True)
-
-        if trial_size > limit and current:
-            out_path = numbered_docx_path(docx_path, len(parts) + 1)
-            document = build_docx_document(
-                export_ctx,
-                current,
-                title=title,
-                leaderboards=board,
-                include_leaderboards=(len(parts) == 0),
-            )
-            document.save(str(out_path))
-            parts.append(out_path)
-            current = [post]
-        else:
-            current = trial_rows
 
     if current:
         out_path = numbered_docx_path(docx_path, len(parts) + 1)

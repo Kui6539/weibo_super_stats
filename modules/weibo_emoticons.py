@@ -88,6 +88,7 @@ def ensure_weibo_emoticon_assets(
         if not allow_download:
             warnings.append(f"有 {len(pending)} 个微博表情图片未缓存，已保留原始文本。")
             return assets, warnings
+        download_failures: list[str] = []
         with ThreadPoolExecutor(max_workers=min(8, len(pending)), thread_name_prefix="weibo-emoticon") as executor:
             futures = {
                 executor.submit(_download_asset, name, source, path): (name, path, rel_path)
@@ -97,9 +98,15 @@ def ensure_weibo_emoticon_assets(
                 name, path, rel_path = futures[future]
                 warning = future.result()
                 if warning:
-                    warnings.append(warning)
+                    download_failures.append(warning)
                 if path.exists() and path.stat().st_size > 0:
                     assets[name] = rel_path
+        # One line per failed emoticon buried the warnings that matter.
+        if download_failures:
+            warnings.append(
+                f"有 {len(download_failures)} 个微博表情图片下载失败，已保留原始文本。"
+                f"（示例：{download_failures[0]}）"
+            )
     return assets, warnings
 
 

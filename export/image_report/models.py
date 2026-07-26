@@ -17,7 +17,11 @@ class ImageReportConfig:
     max_posts_per_page: int = 5
     render_jpg: bool = True
     render_weibo_emoticons: bool = True
-    download_all_emoticons: bool = True
+    # Fetch only the emoticons this report actually uses. Defaulting to the
+    # whole index pulled hundreds of files over eight threads during the
+    # export stage of every first run, for images that would never be
+    # rendered, and flooded the warnings list when any of them failed.
+    download_all_emoticons: bool = False
     font_path: str = ""
     browser_channel: str = "msedge"
 
