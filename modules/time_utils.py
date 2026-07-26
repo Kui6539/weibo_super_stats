@@ -33,6 +33,40 @@ def parse_weibo_time(text: str, now: datetime | None = None) -> datetime | None:
     return None
 
 
+# The shapes a window bound arrives in: the config file stores seconds, the
+# browser's datetime-local input sends the "T" form without them.
+CONFIG_DATETIME_FORMATS = (
+    "%Y-%m-%d %H:%M:%S",
+    "%Y-%m-%d %H:%M",
+    "%Y-%m-%dT%H:%M:%S",
+    "%Y-%m-%dT%H:%M",
+)
+
+
+def parse_config_datetime(value: object) -> datetime | None:
+    """Parse a stored window bound, returning None rather than raising."""
+    text = str(value or "").strip()
+    for fmt in CONFIG_DATETIME_FORMATS:
+        try:
+            return datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def format_date_range(start: object, end: object, sep: str = " - ") -> str:
+    """Render a "YYYY.MM.DD - YYYY.MM.DD" range, or "" if either end is bad.
+
+    The weibo draft and the long-image report print the same range and are
+    published together, so they must agree.
+    """
+    start_dt = parse_config_datetime(start)
+    end_dt = parse_config_datetime(end)
+    if not start_dt or not end_dt:
+        return ""
+    return f"{start_dt.strftime('%Y.%m.%d')}{sep}{end_dt.strftime('%Y.%m.%d')}"
+
+
 def format_datetime(value: datetime | None, fmt: str = "%Y-%m-%d %H:%M") -> str:
     return value.strftime(fmt) if value else ""
 

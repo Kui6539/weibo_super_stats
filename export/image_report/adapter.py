@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -13,9 +13,9 @@ from export.report_helpers import (
     split_multi_values,
 )
 from modules.text_cleaning import normalize_weibo_text
+from modules.time_utils import format_date_range, parse_config_datetime
 from modules.topic import build_report_title, normalize_report_title
-
-ISSUE_ONE_SATURDAY = datetime(2026, 4, 25)
+from modules.topic import calculate_weekly_issue as _topic_calculate_weekly_issue
 
 
 def build_image_report_data(ctx: ExportContext, config: ImageReportConfig | None = None) -> ImageReportData:
@@ -113,23 +113,16 @@ def _image_size(path: Path) -> tuple[int, int]:
 
 
 def _date_range_from_config(config: dict[str, Any]) -> str:
-    start = _parse_date(config.get("window_start"))
-    end = _parse_date(config.get("window_end"))
-    if not start or not end:
-        return ""
-    return f"{start.strftime('%Y.%m.%d')} - {end.strftime('%Y.%m.%d')}"
+    return format_date_range(config.get("window_start"), config.get("window_end"))
 
 
-def calculate_weekly_issue(reference: datetime | None = None) -> int:
-    """Issue 1 is anchored to Saturday 2026-04-25; weekdays count toward the upcoming Saturday."""
-    ref = reference or datetime.now()
-    target_saturday = ref + timedelta(days=(5 - ref.weekday()) % 7)
-    weeks = (target_saturday.date() - ISSUE_ONE_SATURDAY.date()).days // 7
-    return max(1, weeks + 1)
+# Forwarded from modules.topic, which owns the anchor date. Kept importable
+# here because tests and older call sites reach for it by this name.
+calculate_weekly_issue = _topic_calculate_weekly_issue
 
 
 def _issue_reference_date(config: dict[str, Any]) -> datetime | None:
-    return _parse_date(config.get("window_end")) or _parse_date(config.get("window_start"))
+    return parse_config_datetime(config.get("window_end")) or parse_config_datetime(config.get("window_start"))
 
 
 def _format_posts_range(posts: list[dict[str, Any]]) -> str:
@@ -140,16 +133,6 @@ def _format_posts_range(posts: list[dict[str, Any]]) -> str:
     if len(parts) != 2:
         return text
     return f"{parts[0].replace('-', '.')} - {parts[1].replace('-', '.')}"
-
-
-def _parse_date(value: Any) -> datetime | None:
-    text = str(value or "").strip()
-    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M"):
-        try:
-            return datetime.strptime(text, fmt)
-        except ValueError:
-            continue
-    return None
 
 
 def _to_int(value: Any) -> int:
