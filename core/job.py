@@ -78,6 +78,24 @@ __all__ = [
 ]
 
 ACTIVE_STATUSES = {"running", "awaiting_selection", "exporting"}
+
+# Paging usually stops before max_pages, so the crawl bar is held short of full
+# until the crawler says it is done.
+CRAWL_PROGRESS_CAP = 96.0
+
+
+def _stage_advances(current_stage: str, next_stage: str) -> bool:
+    """True when moving to *next_stage* is forward progress.
+
+    Progress events arrive from worker threads, so a straggler from an earlier
+    phase can land after the job has moved on. Without this the bar would jump
+    backwards -- from scoring to crawling and then forward again.
+    """
+    if next_stage not in STAGE_ORDER:
+        return False
+    if current_stage not in STAGE_ORDER:
+        return True
+    return STAGE_ORDER.index(next_stage) > STAGE_ORDER.index(current_stage)
 RUN_DIR_RE = re.compile(r"^\d{8}_\d{6}$")
 _console_lock = threading.Lock()
 _job_lock = threading.RLock()
@@ -132,6 +150,8 @@ class CrawlJob:
         self.report_title = format_report_title_with_issue(build_report_title("", self.cfg.super_topic), self.cfg.issue)
 
         self._candidate_posts: list[dict] = []
+        # Highest count seen in the current stage; see _hold_high_water.
+        self._progress_high_water = -1
         # True once the cache holds enough to regenerate reports offline; from
         # that point a failure cleans up the half-written output only.
         self._cache_recoverable = False
@@ -411,23 +431,116 @@ class CrawlJob:
             )
 
     def _crawler_log(self, message: str) -> None:
+        """Record a crawler log line, inferring progress from it if possible.
+
+        The inference is legacy: crawler.py now reports progress through
+        _crawler_progress, so anything still arriving here is either a purely
+        informational line or a caller that predates the structured channel.
+        """
         self.check_cancelled()
         info = self._parse_progress_message(str(message))
         if info:
-            next_stage = str(info.get("stage") or self.stage)
-            if next_stage != self.stage:
-                self.set_stage(next_stage, message=str(info.get("stage_message") or stage_label(next_stage)))
-            self.update_progress(
+            self._apply_progress(
+                stage=str(info.get("stage") or self.stage),
+                message=str(info.get("message") or message),
                 current=info.get("current"),
                 total=info.get("total"),
                 percent=info.get("percent"),
-                message=str(info.get("message") or message),
-                stage=next_stage,
             )
         self.add_log(str(message), level=infer_log_level(str(message)), stage=str(info.get("stage") if info else self.stage))
         self.check_cancelled()
 
+    def _crawler_progress(self, event: dict[str, Any]) -> None:
+        """Consume a structured progress event: move the bar and log the line.
+
+        The event carries the message, so this is the only place it is
+        recorded -- routing it through the log channel as well would duplicate
+        every progress line in the user's log panel.
+
+        Cancellation is checked here because during a long parallel phase these
+        events may be the only thing calling back into the job, and a cancel
+        that goes unnoticed until the phase ends feels like a hang.
+        """
+        self.check_cancelled()
+        if not isinstance(event, dict):
+            return
+        stage = str(event.get("stage") or self.stage)
+        message = str(event.get("message") or "")
+        current = optional_int(event.get("current"))
+        total = optional_int(event.get("total"))
+        self._apply_progress(
+            stage=stage,
+            message=message,
+            current=current,
+            total=total,
+            percent=self._stage_percent(stage, current, total, done=bool(event.get("done"))),
+        )
+        if message:
+            self.add_log(message, level=infer_log_level(message), stage=self.stage)
+        self.check_cancelled()
+
+    def _apply_progress(
+        self,
+        *,
+        stage: str,
+        message: str,
+        current: Any = None,
+        total: Any = None,
+        percent: Any = None,
+    ) -> None:
+        if stage != self.stage and _stage_advances(self.stage, stage):
+            self.set_stage(stage, message=stage_label(stage))
+            self._progress_high_water = -1
+        current, percent = self._hold_high_water(current, percent)
+        self.update_progress(
+            current=current,
+            total=total,
+            percent=percent,
+            message=message,
+            stage=stage if stage == self.stage else self.stage,
+        )
+
+    def _hold_high_water(self, current: Any, percent: Any) -> tuple[Any, Any]:
+        """Never let a count go backwards inside a stage.
+
+        Image downloads and the scoring phases report from a thread pool, so a
+        slower worker's event can arrive after a faster one's. Without this the
+        bar visibly jumps back and forth. The high-water mark resets whenever
+        the stage advances.
+        """
+        value = optional_int(current)
+        if value is None:
+            return current, percent
+        if value < self._progress_high_water:
+            return None, None
+        self._progress_high_water = value
+        return current, percent
+
+    def _stage_percent(self, stage: str, current: int | None, total: int | None, done: bool) -> float | None:
+        """Turn counts into a bar percentage.
+
+        Crawling stops early far more often than it exhausts max_pages -- the
+        window fills up, or the topic runs out of posts -- so the page ratio is
+        capped short of full and only an explicit stop marks it complete.
+        Otherwise the bar would sit at, say, 15% and jump straight to the next
+        stage.
+        """
+        if done:
+            return 100.0
+        if current is None or not total:
+            return None
+        ratio = (current / max(1, total)) * 100
+        if stage == "crawl":
+            return min(CRAWL_PROGRESS_CAP, ratio)
+        return min(100.0, ratio)
+
     def _parse_progress_message(self, message: str) -> dict[str, Any] | None:
+        """Recover progress from a log line. Superseded by _crawler_progress.
+
+        Kept as a fallback for log lines that have no structured counterpart.
+        It is why rewording a message in crawler.py used to freeze the bar --
+        and why two stop-paging lines never registered at all.
+        """
         if match := re.search(r"抓取第\s+(\d+)\s+页", message):
             page = int(match.group(1))
             return {
@@ -562,6 +675,7 @@ class CrawlJob:
             crawler = WeiboSuperTopicCrawler(
                 cookie=self.cfg.cookie,
                 progress_callback=self._crawler_log,
+                progress_event_callback=self._crawler_progress,
                 stage_callback=lambda stage, posts: self._write_cache_stage(cache_store, stage, posts),
                 comment_cache_reader=cache_store.read_comment_cache,
                 comment_cache_writer=cache_store.write_comment_cache,
@@ -690,6 +804,7 @@ class CrawlJob:
                 image_dir=image_dir,
                 cookie=self.cfg.cookie,
                 progress_callback=self._crawler_log,
+                progress_event_callback=self._crawler_progress,
                 cancel_checker=self.check_cancelled,
             )
             self.check_cancelled()

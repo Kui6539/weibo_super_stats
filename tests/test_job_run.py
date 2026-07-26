@@ -144,11 +144,13 @@ class FakeCrawler:
         stage_callback: Callable[[str, Any], None] | None = None,
         comment_cache_reader: Callable[[str], Any] | None = None,
         comment_cache_writer: Callable[[str, Any], Any] | None = None,
+        progress_event_callback: Callable[[dict[str, Any]], None] | None = None,
         posts: list[dict[str, Any]] | None = None,
         crawl_error: BaseException | None = None,
     ) -> None:
         self.cookie = cookie
         self.progress_callback = progress_callback
+        self.progress_event_callback = progress_event_callback
         self.stage_callback = stage_callback
         self.comment_cache_reader = comment_cache_reader
         self.comment_cache_writer = comment_cache_writer
@@ -161,6 +163,19 @@ class FakeCrawler:
     def _log(self, message: str) -> None:
         if self.progress_callback:
             self.progress_callback(message)
+
+    def _progress(self, stage: str, message: str, current: int | None = None, total: int | None = None,
+                  *, done: bool = False) -> None:
+        """Mirrors WeiboSuperTopicCrawler._progress, including its fallback."""
+        if not self.progress_event_callback:
+            self._log(message)
+            return
+        event: dict[str, Any] = {"stage": stage, "message": message, "done": done}
+        if current is not None:
+            event["current"] = current
+        if total is not None:
+            event["total"] = total
+        self.progress_event_callback(event)
 
     def _stage(self, stage: str, data: Any) -> None:
         if self.stage_callback:
@@ -190,6 +205,7 @@ def fake_download_post_images(
     cookie: str = "",
     progress_callback: Callable[[str], None] | None = None,
     cancel_checker: Callable[[], None] | None = None,
+    progress_event_callback: Callable[[dict[str, Any]], None] | None = None,
     **_kwargs: Any,
 ) -> None:
     """No-op stand-in that still honours the cancellation checkpoint."""
@@ -197,8 +213,12 @@ def fake_download_post_images(
         cancel_checker()
     if image_dir is not None:
         Path(image_dir).mkdir(parents=True, exist_ok=True)
-    if progress_callback:
-        progress_callback(f"下载图片进度 {len(list(posts or []))}/{max(1, len(list(posts or [])))}")
+    total = max(1, len(list(posts or [])))
+    message = f"下载图片进度 {total}/{total}"
+    if progress_event_callback:
+        progress_event_callback({"stage": "images", "message": message, "current": total, "total": total})
+    elif progress_callback:
+        progress_callback(message)
 
 
 def fake_build_candidate_thumbnails(posts: Any, cache_store: Any, **_kwargs: Any) -> dict[str, Any]:

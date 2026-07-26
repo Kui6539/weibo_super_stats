@@ -174,3 +174,94 @@ class SubtaskContractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StructuredProgressEventTests(unittest.TestCase):
+    """The replacement channel: the crawler sends counts, not sentences."""
+
+    def test_an_event_moves_the_bar_and_logs_the_message_once(self) -> None:
+        job = make_job()
+        job._crawler_progress({"stage": "crawl", "message": "抓取第 3 页...", "current": 3, "total": 80})
+
+        self.assertEqual(job.stage, "crawl")
+        self.assertEqual(job.progress["current"], 3)
+        self.assertEqual(job.progress["total"], 80)
+        self.assertEqual([entry["message"] for entry in job.snapshot()["logs"]].count("抓取第 3 页..."), 1)
+
+    def test_the_crawl_bar_is_held_short_of_full_until_paging_stops(self) -> None:
+        """Paging usually ends early, so the ratio alone must not read 100%."""
+        job = make_job()
+        job._crawler_progress({"stage": "crawl", "message": "抓取第 80 页...", "current": 80, "total": 80})
+        self.assertEqual(job.progress["percent"], 96.0)
+
+        job._crawler_progress({"stage": "crawl", "message": "已翻到最大页数 80，停止抓取。", "done": True})
+        self.assertEqual(job.progress["percent"], 100.0)
+
+    def test_every_stop_reason_now_completes_the_stage(self) -> None:
+        """The three lines the regex parser never recognised."""
+        for message in (
+            "已连续5页没有时间窗口内的新增帖子，停止翻页。",
+            "新版超话接口没有更多页，停止翻页。",
+            "已翻到最大页数 80，停止抓取。",
+        ):
+            with self.subTest(message=message):
+                job = make_job()
+                job._crawler_progress({"stage": "crawl", "message": message, "done": True})
+                self.assertEqual(job.progress["percent"], 100.0)
+
+    def test_the_crawl_total_is_the_real_page_limit_not_the_configured_max(self) -> None:
+        """Paging is capped at 80 regardless of max_pages.
+
+        The old parser divided by cfg.max_pages, so configuring 200 pages left
+        the bar unable to pass 40%. The event carries the effective limit.
+        """
+        job = make_job(max_pages=200)
+        job._crawler_progress({"stage": "crawl", "message": "抓取第 40 页...", "current": 40, "total": 80})
+        self.assertEqual(job.progress["total"], 80)
+        self.assertEqual(job.progress["percent"], 50.0)
+
+    def test_stages_advance_but_never_go_backwards(self) -> None:
+        """A straggler event from a finished phase must not rewind the bar."""
+        job = make_job()
+        job._crawler_progress({"stage": "hydrate", "message": "正文校正 1/5", "current": 1, "total": 5})
+        self.assertEqual(job.stage, "hydrate")
+
+        job._crawler_progress({"stage": "score", "message": "评分进度 1/9", "current": 1, "total": 9})
+        self.assertEqual(job.stage, "score")
+
+        job._crawler_progress({"stage": "hydrate", "message": "正文校正 5/5", "current": 5, "total": 5})
+        self.assertEqual(job.stage, "score", "a late hydrate event must not pull the stage back")
+
+    def test_counts_never_regress_within_a_stage(self) -> None:
+        """Thread-pool phases report out of order."""
+        job = make_job()
+        job._crawler_progress({"stage": "images", "message": "下载图片进度 6/10", "current": 6, "total": 10})
+        job._crawler_progress({"stage": "images", "message": "下载图片进度 2/10", "current": 2, "total": 10})
+        self.assertEqual(job.progress["current"], 6)
+
+    def test_the_high_water_mark_resets_when_the_stage_advances(self) -> None:
+        job = make_job()
+        job._crawler_progress({"stage": "crawl", "message": "抓取第 40 页...", "current": 40, "total": 80})
+        job._crawler_progress({"stage": "hydrate", "message": "正文校正 1/5", "current": 1, "total": 5})
+        self.assertEqual(job.progress["current"], 1, "a new stage starts counting from scratch")
+
+    def test_cancellation_is_still_noticed_through_the_event_channel(self) -> None:
+        """Cancellation used to ride on the log callback.
+
+        Progress no longer travels that way, so if this checkpoint were
+        dropped a cancel during a long parallel phase would go unnoticed until
+        the phase ended.
+        """
+        from core.errors import JobCancelled
+
+        job = make_job()
+        job.cancel_requested.set()
+        with self.assertRaises(JobCancelled):
+            job._crawler_progress({"stage": "crawl", "message": "抓取第 3 页...", "current": 3, "total": 80})
+
+    def test_a_malformed_event_is_ignored_rather_than_crashing_the_run(self) -> None:
+        job = make_job()
+        for event in (None, "抓取中", 42, []):
+            with self.subTest(event=event):
+                job._crawler_progress(event)
+        self.assertEqual(job.status, "running")

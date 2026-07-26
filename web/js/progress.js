@@ -288,218 +288,38 @@ window.WeiboProgress = {
         });
       }
 
-      const logs = job?.logs || [];
-      const messages = logs.map((item) => item.message || "");
+      // No subtasks means no server-side job: history reexport renders a
+      // synthetic snapshot and a freshly loaded page has nothing yet. This was
+      // ~185 lines that re-derived the whole stage list by running regexes
+      // over Chinese log text -- a second copy of the parser the backend has
+      // now replaced with structured events, and one that drifted silently
+      // whenever a message was reworded.
       const status = job?.status || "";
-      const failed = status === "failed";
-      const cancelled = status === "cancelled";
-      const completed = status === "completed";
-      const selectionReady = status === "awaiting_selection";
-      const exporting = status === "exporting";
-      const hasStarted = Boolean(job);
-      const maxPages = Math.max(1, Number(fields.maxPages.value || 80));
-      const latestPage = lastNumber(messages, /抓取第\s+(\d+)\s+页/);
-      const latestCrawlDetail =
-        lastMatchingMessage(messages, /已连续5页无时间窗口命中帖子/) ||
-        lastMatchingMessage(messages, /本页没有帖子数据，停止翻页/) ||
-        lastMatchingMessage(messages, /第\s+\d+\s+页读取/) ||
-        lastMatchingMessage(messages, /连续无命中页/) ||
-        "";
-      const textProgress = maxProgress(messages, /正文校正(?:进度)?\s+(\d+)\/(\d+)/);
-      const scoreProgress = maxProgress(messages, /评分进度\s+(\d+)\/(\d+)/);
-      const thumbnailProgress = maxProgress(messages, /预选帖缩略图\s+(\d+)\/(\d+)/);
-      const downloadProgress = maxProgress(messages, /下载图片(?:进度|失败)\s+(\d+)\/(\d+)/);
-      const exportSavedCount = [
-        "Excel 已保存",
-        "CSV 已保存",
-        "DOCX 已保存",
-        "总 DOCX 已保存",
-        "MD 已保存",
-        "汇总已保存",
-        "微博正文已保存",
-        "长图预览已保存",
-      ].filter((marker) => messages.some((message) => message.includes(marker))).length;
-      const hasCandidates = messages.some((message) => message.includes("等待人工筛选"));
-      const hasSelectionDone = messages.some((message) => message.includes("人工筛选完成"));
-      const hasThumbnailStart = messages.some((message) =>
-        ["开始下载预选帖缩略图", "准备处理预选帖缩略图"].some((marker) => message.includes(marker)),
-      );
-      const hasThumbnailDone = messages.some((message) =>
-        ["预选帖缩略图缓存完成", "预选帖没有图片"].some((marker) => message.includes(marker)),
-      );
-      const hasImageStart = messages.some((message) => message.includes("正在下载帖子/评论图片"));
-      const hasExportFiles = exportSavedCount > 0 || completed;
-      const imageDownloadDone =
-        Boolean(downloadProgress) && downloadProgress.current >= downloadProgress.total;
-      const crawlFinished =
-        completed ||
-        exporting ||
-        selectionReady ||
-        hasCandidates ||
-        messages.some((message) =>
-          [
-            "已连续5页无时间窗口命中帖子",
-            "已连续5页没有时间窗口内的新增帖子",
-            "本页没有帖子数据，停止翻页",
-            "补全帖子正文",
-            "开始计算评分",
-            "自动校准时间权重",
-          ].some((marker) => message.includes(marker)),
-        );
-      const steps = [
+      if (!job) {
+        return [progressStep("idle", "任务进度", "填写参数后开始任务", 0, "pending", "未开始")];
+      }
+      const state =
+        status === "completed"
+          ? "done"
+          : status === "failed"
+            ? "failed"
+            : status === "cancelled"
+              ? "cancelled"
+              : "active";
+      const detail = job.progress?.message || job.stage_label || "任务进行中";
+      const counter = job.progress?.total ? `${job.progress.current || 0}/${job.progress.total}` : "";
+      return [
         progressStep(
-          "init",
-          "初始化任务",
-          hasStarted ? "配置已读取，任务线程已启动" : "填写参数后开始任务",
-          hasStarted ? 100 : 0,
-          hasStarted ? "done" : "pending",
-          "阶段 1/7",
+          job.stage || "task",
+          job.stage_label || "任务进度",
+          detail,
+          Number(job.progress?.percent || 0),
+          state,
+          counter,
         ),
       ];
-
-      if (hasStarted) {
-        const crawlPercent = crawlFinished ? 100 : clamp((latestPage / maxPages) * 86 + 8, 8, 96);
-        steps.push(
-          progressStep(
-            "crawl",
-            "抓取帖子数据",
-            latestCrawlDetail || (latestPage ? `正在读取第 ${latestPage} 页，最多 ${maxPages} 页` : "连接超话页面并读取帖子"),
-            crawlPercent,
-            crawlFinished ? "done" : "active",
-            latestPage ? `第 ${latestPage}/${maxPages} 页` : "阶段 2/7",
-          ),
-        );
-      }
-
-      if (latestPage || hasCandidates || selectionReady || exporting || completed) {
-        const candidateProgress = candidateStageProgress({
-          hasCandidates,
-          hasThumbnailStart,
-          hasThumbnailDone,
-          selectionReady,
-          exporting,
-          completed,
-          textProgress,
-          scoreProgress,
-          messages,
-        });
-        steps.push(
-          progressStep(
-            "candidate",
-            "评论分析与评分",
-            candidateProgress.detail,
-            hasThumbnailStart || hasCandidates || selectionReady || exporting || completed ? 100 : candidateProgress.progress,
-            hasThumbnailStart || hasCandidates || selectionReady || exporting || completed ? "done" : "active",
-            candidateProgress.meta,
-          ),
-        );
-      }
-
-      if (hasThumbnailStart || hasCandidates || selectionReady || exporting || completed || cancelled) {
-        const thumbnailDone = hasThumbnailDone || hasCandidates || selectionReady || exporting || completed;
-        steps.push(
-          progressStep(
-            "thumbnails",
-            "下载预选帖缩略图",
-            thumbnailProgress
-              ? `已处理 ${thumbnailProgress.current}/${thumbnailProgress.total} 张缩略图`
-              : thumbnailDone
-                ? "预选帖缩略图缓存完成"
-                : "正在准备预选帖缩略图缓存",
-            thumbnailDone ? 100 : thumbnailProgress ? (thumbnailProgress.current / thumbnailProgress.total) * 100 : 12,
-            thumbnailDone ? "done" : "active",
-            thumbnailProgress ? `${thumbnailProgress.current}/${thumbnailProgress.total} 张` : "阶段 4/7",
-          ),
-        );
-      }
-
-      if (hasCandidates || selectionReady || exporting || completed || cancelled) {
-        steps.push(
-          progressStep(
-            "selection",
-            "人工筛选",
-            selectionReady
-              ? `请选择 ${job?.required_pick_count || 0} 条入选帖子`
-              : hasSelectionDone || exporting || completed
-                ? "入选帖子已确认"
-                : "等待人工确认",
-            hasSelectionDone || exporting || completed ? 100 : selectionReady ? 62 : 0,
-            hasSelectionDone || exporting || completed ? "done" : selectionReady ? "waiting" : "pending",
-            selectionReady ? `${getSelectedCount(job)}/${job?.required_pick_count || 0} 已选` : "阶段 5/7",
-          ),
-        );
-      }
-
-      if (hasSelectionDone || hasImageStart || downloadProgress || exporting || completed) {
-        const percent = completed || hasExportFiles || imageDownloadDone ? 100 : downloadProgress ? (downloadProgress.current / downloadProgress.total) * 100 : 18;
-        steps.push(
-          progressStep(
-            "images",
-            "下载图片资源",
-            downloadProgress
-              ? `已处理 ${downloadProgress.current}/${downloadProgress.total} 个帖子`
-              : hasImageStart
-                ? "正在下载帖子图片与热评图片"
-                : "等待图片下载",
-            percent,
-            completed || hasExportFiles || imageDownloadDone ? "done" : "active",
-            downloadProgress ? `${downloadProgress.current}/${downloadProgress.total} 帖` : "阶段 6/7",
-          ),
-        );
-      }
-
-      if (imageDownloadDone || hasExportFiles || completed) {
-        steps.push(
-          progressStep(
-            "export",
-            "生成导出文件",
-            completed
-              ? "XLSX、CSV、DOCX、Markdown、微博正文、汇总与长图文件已生成"
-              : exportSavedCount
-                ? `已生成 ${exportSavedCount}/8 类文件`
-                : "图片下载完成，正在生成导出文件",
-            completed ? 100 : clamp((exportSavedCount / 8) * 100, imageDownloadDone || hasExportFiles ? 20 : 0, 96),
-            completed ? "done" : imageDownloadDone || hasExportFiles ? "active" : "pending",
-            completed ? "8/8 文件" : `${exportSavedCount}/8 文件`,
-          ),
-        );
-      }
-
-      if (failed) {
-        markLastMutableStep(steps, "failed", job?.error || lastMessage(messages) || "任务失败");
-      } else if (cancelled) {
-        markLastMutableStep(steps, "cancelled", "任务已取消");
-      }
-
-      return steps;
     }
 
-    function candidateStageProgress({ hasCandidates, hasThumbnailStart, hasThumbnailDone, selectionReady, exporting, completed, textProgress, scoreProgress, messages }) {
-      if (hasThumbnailStart || hasThumbnailDone || hasCandidates || selectionReady || exporting || completed) {
-        return { progress: 100, detail: "评分完成，预选帖列表已生成", meta: "阶段 3/7" };
-      }
-      if (scoreProgress) {
-        return {
-          progress: clamp(62 + (scoreProgress.current / scoreProgress.total) * 28, 62, 96),
-          detail: `正在计算热度评分：${scoreProgress.current}/${scoreProgress.total}`,
-          meta: `${scoreProgress.current}/${scoreProgress.total} 评分`,
-        };
-      }
-      if (messages.some((message) => message.includes("开始计算评分"))) {
-        return { progress: 62, detail: "正在估算评论结构并计算时间权重", meta: "评分中" };
-      }
-      if (textProgress) {
-        return {
-          progress: clamp(28 + (textProgress.current / textProgress.total) * 26, 28, 58),
-          detail: `正在补全正文：${textProgress.current}/${textProgress.total}`,
-          meta: `${textProgress.current}/${textProgress.total} 正文`,
-        };
-      }
-      if (messages.some((message) => message.includes("补全帖子正文"))) {
-        return { progress: 28, detail: "正在补全长文与被截断正文", meta: "正文校正" };
-      }
-      return { progress: 18, detail: "清洗帖子内容并准备评分", meta: "阶段 3/7" };
-    }
 
     function progressStep(id, title, detail, progress, state, meta = "") {
       return {
@@ -587,14 +407,6 @@ window.WeiboProgress = {
       );
     }
 
-    function markLastMutableStep(steps, state, detail) {
-      const step = [...steps].reverse().find((item) => item.state !== "done") || steps[steps.length - 1];
-      if (!step) return;
-      step.state = state;
-      step.detail = detail;
-      step.progress = state === "failed" ? Math.max(step.progress, 6) : step.progress;
-    }
-
     function lastNumber(messages, regex) {
       let value = 0;
       for (const message of messages) {
@@ -627,10 +439,6 @@ window.WeiboProgress = {
         if (regex.test(message)) value = message;
       }
       return value;
-    }
-
-    function lastMessage(messages) {
-      return messages.length ? messages[messages.length - 1] : "";
     }
 
     function clamp(value, min, max) {

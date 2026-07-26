@@ -105,6 +105,7 @@ class WeiboSuperTopicCrawler:
         stage_callback: Callable[[str, list[dict]], None] | None = None,
         comment_cache_reader: Callable[[str], dict | None] | None = None,
         comment_cache_writer: Callable[[str, dict], None] | None = None,
+        progress_event_callback: Callable[[dict], None] | None = None,
     ) -> None:
         self.cookie = cookie.strip()
         self.user_agent = user_agent or (
@@ -113,6 +114,7 @@ class WeiboSuperTopicCrawler:
             "Chrome/124.0.0.0 Safari/537.36"
         )
         self.progress_callback = progress_callback
+        self.progress_event_callback = progress_event_callback
         self.stage_callback = stage_callback
         self.comment_cache_reader = comment_cache_reader
         self.comment_cache_writer = comment_cache_writer
@@ -230,6 +232,40 @@ class WeiboSuperTopicCrawler:
         if self.progress_callback:
             self.progress_callback(message)
 
+    def _progress(
+        self,
+        stage: str,
+        message: str,
+        current: int | None = None,
+        total: int | None = None,
+        *,
+        done: bool = False,
+    ) -> None:
+        """Report progress as data, and log the same message as prose.
+
+        The consumer used to recover ``stage`` and the counts by running
+        regexes over the log line, so rewording a message here silently froze
+        the progress bar -- and two stop-paging lines never matched at all.
+        Sending the numbers directly removes that coupling; the log text stays
+        exactly as it was, because users read it.
+
+        ``done`` marks a stage finished even when no count applies, which is
+        what those unmatched lines needed.
+
+        The message travels with the event rather than down the log channel as
+        well, so the consumer records it exactly once; without a structured
+        consumer it falls back to the log so nothing is lost.
+        """
+        if not self.progress_event_callback:
+            self._log(message)
+            return
+        event = {"stage": stage, "message": message, "done": bool(done)}
+        if current is not None:
+            event["current"] = int(current)
+        if total is not None:
+            event["total"] = max(1, int(total))
+        self.progress_event_callback(event)
+
     def _emit_stage_cache(self, stage: str, posts: list[dict]) -> None:
         if self.stage_callback:
             self.stage_callback(stage, posts)
@@ -280,10 +316,10 @@ class WeiboSuperTopicCrawler:
             self._log(f"按周报抓取规则，本次最多翻到第 {page_limit} 页。")
 
         for page in range(1, page_limit + 1):
-            self._log(f"抓取第 {page} 页...")
+            self._progress("crawl", f"抓取第 {page} 页...", current=page, total=page_limit)
             if use_chaohua_api:
                 if page > 1 and not chaohua_next_params:
-                    self._log("新版超话接口没有更多页，停止翻页。")
+                    self._progress("crawl", "新版超话接口没有更多页，停止翻页。", done=True)
                     break
                 page_data = self._fetch_chaohua_page(topic_id, chaohua_next_params or _chaohua_initial_params(topic_id))
                 self._apply_chaohua_topic_name(page_data, config.super_topic)
@@ -309,7 +345,7 @@ class WeiboSuperTopicCrawler:
                     page_posts = _chaohua_parse_posts_from_json(page_data)
                     chaohua_next_params = _chaohua_next_params(topic_id, page_data)
             if not page_posts:
-                self._log("本页没有帖子数据，停止翻页。")
+                self._progress("crawl", "本页没有帖子数据，停止翻页。", done=True)
                 break
 
             # 用整页签名做“连续重复页”判断，避免仅比较前几条导致误判提前停页
@@ -362,15 +398,15 @@ class WeiboSuperTopicCrawler:
                 no_new_hit_streak = 0
 
             if no_new_hit_streak >= 5:
-                self._log("已连续5页没有时间窗口内的新增帖子，停止翻页。")
+                self._progress("crawl", "已连续5页没有时间窗口内的新增帖子，停止翻页。", done=True)
                 break
 
             if use_chaohua_api and not chaohua_next_params:
-                self._log("新版超话接口没有更多页，停止翻页。")
+                self._progress("crawl", "新版超话接口没有更多页，停止翻页。", done=True)
                 break
 
             if page >= page_limit:
-                self._log(f"已翻到最大页数 {page_limit}，停止抓取。")
+                self._progress("crawl", f"已翻到最大页数 {page_limit}，停止抓取。", done=True)
                 break
             # Pacing between pages is handled by the shared limiter in _request.
 
@@ -384,11 +420,11 @@ class WeiboSuperTopicCrawler:
             )
 
         self._emit_stage_cache("posts_raw", all_posts)
-        self._log("补全帖子正文（包含疑似截断内容）...")
+        self._progress("hydrate", "补全帖子正文（包含疑似截断内容）...", current=0)
         self.hydrate_full_text_posts(all_posts, max_workers=config.text_workers)
         self._emit_stage_cache("posts_hydrated", all_posts)
 
-        self._log("开始计算评分（包含评论结构估算与时间权重）...")
+        self._progress("score", "开始计算评分（包含评论结构估算与时间权重）...", current=0)
         self.enrich_score_fields(all_posts, config)
 
         self._log("自动校准时间权重（目标拟合度 90%~93%）...")
@@ -472,9 +508,19 @@ class WeiboSuperTopicCrawler:
         analysis_total = len(analysis_rows)
         skipped = len(comment_rows) - analysis_total
         if skipped > 0:
-            self._log(f"快速评分已完成：评论结构精查 {analysis_total}/{len(comment_rows)} 条，跳过低潜力 {skipped} 条。")
+            self._progress(
+                "score",
+                f"快速评分已完成：评论结构精查 {analysis_total}/{len(comment_rows)} 条，跳过低潜力 {skipped} 条。",
+                current=0,
+                total=analysis_total,
+            )
         elif comment_rows:
-            self._log(f"快速评分已完成：评论结构精查 {analysis_total}/{len(comment_rows)} 条。")
+            self._progress(
+                "score",
+                f"快速评分已完成：评论结构精查 {analysis_total}/{len(comment_rows)} 条。",
+                current=0,
+                total=analysis_total,
+            )
 
         if not analysis_rows:
             return
@@ -482,7 +528,7 @@ class WeiboSuperTopicCrawler:
         worker_count = _bounded_worker_count(config.comment_workers, analysis_total)
         if worker_count == 1:
             for idx, post in enumerate(analysis_rows, start=1):
-                self._log(f"评分进度 {idx}/{analysis_total}: {post.get('post_id', '-')}")
+                self._progress("score", f"评分进度 {idx}/{analysis_total}: {post.get('post_id', '-')}", current=idx, total=analysis_total)
                 self._enrich_score_fields(post, config, score_config=score_config)
             return
 
@@ -497,13 +543,19 @@ class WeiboSuperTopicCrawler:
                 try:
                     future.result()
                 except Exception as err:
-                    self._log(
+                    # A failure still consumed one of the units of work; the
+                    # other two parallel phases already counted theirs, so the
+                    # completion total was short only here.
+                    self._progress(
+                        "score",
                         f"评分失败 {completed}/{analysis_total}: {post.get('post_id', '-')}, "
-                        f"{type(err).__name__}: {err}"
+                        f"{type(err).__name__}: {err}",
+                        current=completed,
+                        total=analysis_total,
                     )
                     self._set_estimated_score_fields(post, config, score_config)
                 if completed == analysis_total or completed % 5 == 0:
-                    self._log(f"评分进度 {completed}/{analysis_total}")
+                    self._progress("score", f"评分进度 {completed}/{analysis_total}", current=completed, total=analysis_total)
 
     def _select_comment_analysis_rows(
         self,
@@ -601,12 +653,17 @@ class WeiboSuperTopicCrawler:
 
         total = len(missing)
         worker_count = _bounded_worker_count(config.comment_workers, total)
-        self._log(f"补全候选热评与评论结构：{total} 条，{worker_count} 个线程。")
+        self._progress(
+            "score",
+            f"补全候选热评与评论结构：{total} 条，{worker_count} 个线程。",
+            current=0,
+            total=total,
+        )
         if worker_count == 1:
             for idx, post in enumerate(missing, start=1):
                 self._enrich_score_fields(post, config, score_config=score_config)
                 if idx == total or idx % 5 == 0:
-                    self._log(f"候选评论补全进度 {idx}/{total}")
+                    self._progress("score", f"候选评论补全进度 {idx}/{total}", current=idx, total=total)
             return True
 
         with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="candidate-comments") as executor:
@@ -624,7 +681,7 @@ class WeiboSuperTopicCrawler:
                         f"{type(err).__name__}: {err}"
                     )
                 if completed == total or completed % 5 == 0:
-                    self._log(f"候选评论补全进度 {completed}/{total}")
+                    self._progress("score", f"候选评论补全进度 {completed}/{total}", current=completed, total=total)
         return True
 
     def _enrich_score_fields_with_private_session(
@@ -972,20 +1029,25 @@ class WeiboSuperTopicCrawler:
         total = len(rows)
         skipped = len(all_rows) - total
         if skipped > 0:
-            self._log(f"正文校正筛选：{total}/{len(all_rows)} 条需要网络补全，跳过 {skipped} 条完整正文。")
+            self._progress(
+                "hydrate",
+                f"正文校正筛选：{total}/{len(all_rows)} 条需要网络补全，跳过 {skipped} 条完整正文。",
+                current=0,
+                total=total,
+            )
         if not total:
-            self._log("正文校正：未发现疑似截断正文，跳过网络补全。")
+            self._progress("hydrate", "正文校正：未发现疑似截断正文，跳过网络补全。", done=True)
             return
 
         worker_count = _bounded_worker_count(max_workers or 6, total)
         if worker_count == 1:
             for idx, post in enumerate(rows, start=1):
                 post_id = str(post.get("post_id") or "")
-                self._log(f"正文校正 {idx}/{total}: {post_id or '-'}")
+                self._progress("hydrate", f"正文校正 {idx}/{total}: {post_id or '-'}", current=idx, total=total)
                 self._hydrate_one_post(post)
             return
 
-        self._log(f"正文校正并行处理：{worker_count} 个线程。")
+        self._progress("hydrate", f"正文校正并行处理：{worker_count} 个线程。")
         with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="text-hydrate") as executor:
             futures = {
                 executor.submit(self._hydrate_one_post_with_private_session, post): post
@@ -1001,7 +1063,7 @@ class WeiboSuperTopicCrawler:
                         f"{type(err).__name__}: {err}"
                     )
                 if completed == total or completed % 5 == 0:
-                    self._log(f"正文校正进度 {completed}/{total}")
+                    self._progress("hydrate", f"正文校正进度 {completed}/{total}", current=completed, total=total)
 
     def _hydrate_one_post_with_private_session(self, post: dict) -> None:
         self._hydrate_one_post(post, session=self._thread_session())
@@ -1360,7 +1422,17 @@ def download_post_images(
     progress_callback: Callable[[str], None] | None = None,
     max_workers: int | None = None,
     cancel_checker: Callable[[], None] | None = None,
+    progress_event_callback: Callable[[dict], None] | None = None,
 ) -> None:
+    def report(message: str, current: int, total: int) -> None:
+        """Log the line and, when wired up, report the counts as data."""
+        if progress_callback:
+            progress_callback(message)
+        if progress_event_callback:
+            progress_event_callback(
+                {"stage": "images", "message": message, "current": current, "total": max(1, total)}
+            )
+
     image_dir.mkdir(parents=True, exist_ok=True)
     ua = user_agent or (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -1421,8 +1493,7 @@ def download_post_images(
             post_dir = image_dir / post_dir_name
             post_urls = _split_multi_urls(str(post.get("original_image_urls") or ""), sep="|")
 
-            if progress_callback:
-                progress_callback(f"下载图片进度 {idx}/{total}: {post_id or '-'}")
+            report(f"下载图片进度 {idx}/{total}: {post_id or '-'}", idx, total)
             if cancel_checker:
                 cancel_checker()
 
@@ -1486,8 +1557,7 @@ def download_post_images(
             try:
                 future.result()
             except Exception as err:
-                if progress_callback:
-                    progress_callback(f"下载图片失败 {idx}/{len(rows)}: {type(err).__name__}: {err}")
+                report(f"下载图片失败 {idx}/{len(rows)}: {type(err).__name__}: {err}", idx, len(rows))
 
 
 def build_summary(posts: Iterable[dict]) -> dict:
