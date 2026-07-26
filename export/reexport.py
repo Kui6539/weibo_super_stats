@@ -89,53 +89,90 @@ def reexport_from_cache(
         reexport=True,
     )
 
-    try:
-        _remove_legacy_report_files(run_dir)
-        if "excel" in export_set or "xlsx" in export_set:
-            export_excel(ctx, files["xlsx"])
-        if "csv" in export_set:
-            export_posts_csv(selected_posts, files["csv"])
-        if "summary" in export_set:
-            write_summary_txt(
-                summary,
-                files["summary"],
-                leaderboards=leaderboards,
-                active_period=active_period,
-                all_posts_summary=all_posts_summary,
-                carryover_hours=int(run_config.get("carryover_hours") or 0) if isinstance(run_config, dict) else 0,
-            )
-        if "weibo_body" in export_set:
-            files["weibo_body"] = export_weibo_body(ctx, files["weibo_body"])
-        if "docx" in export_set:
-            _remove_generated_docx(run_dir)
-            docx_paths = export_docx(ctx, run_dir / "weekly_report.docx")
-            files["docx"] = docx_paths
-            files["docx_sum"] = export_weekly_report_sum_docx(
-                selected_posts,
-                run_dir / "weekly_report_sum.docx",
-                title=report_title,
-                leaderboards=leaderboards,
-                preselected=True,
-                ctx=ctx,
-            )
-        if "markdown" in export_set:
-            export_weekly_report_md(
-                selected_posts,
-                files["markdown"],
-                title=report_title,
-                leaderboards=leaderboards,
-                preselected=True,
-            )
-        if "long_images" in export_set:
-            image_result = export_image_report(ctx)
-            files["image_report_preview"] = image_result.preview
-            files["image_report_pages"] = image_result.pages
-            files["image_report_metadata"] = image_result.metadata
-            warnings.extend(image_result.warnings)
-    except PermissionError as err:
-        raise ReexportError("文件写入失败", "请关闭正在打开的 Word/Excel 文件后重试。") from err
-    except OSError as err:
-        raise ReexportError("文件写入失败", "请确认导出目录可写，并关闭正在打开的导出文件后重试。") from err
+    requested: list[str] = []
+    failed_exports: list[str] = []
+
+    def run_export(label: str, wanted: bool, fn: Any) -> Any:
+        """Run one exporter, isolating its failure from the others.
+
+        A single locked file used to abort the whole regeneration, so a user
+        who merely had weibo_posts.xlsx open could not rebuild the Markdown
+        either -- and the manifest was left untouched on top of that.
+        """
+        if not wanted:
+            return None
+        requested.append(label)
+        try:
+            return fn()
+        except (OSError, ValueError) as err:
+            failed_exports.append(label)
+            detail = "文件可能正被其他程序打开" if isinstance(err, OSError) else type(err).__name__
+            warnings.append(f"{label} 重新生成失败（{detail}），其余格式已继续生成。")
+            return None
+
+    _remove_legacy_report_files(run_dir)
+    run_export("Excel", "excel" in export_set or "xlsx" in export_set, lambda: export_excel(ctx, files["xlsx"]))
+    run_export("CSV", "csv" in export_set, lambda: export_posts_csv(selected_posts, files["csv"]))
+    run_export(
+        "统计摘要",
+        "summary" in export_set,
+        lambda: write_summary_txt(
+            summary,
+            files["summary"],
+            leaderboards=leaderboards,
+            active_period=active_period,
+            all_posts_summary=all_posts_summary,
+            carryover_hours=int(run_config.get("carryover_hours") or 0) if isinstance(run_config, dict) else 0,
+        ),
+    )
+    body_path = run_export(
+        "微博正文", "weibo_body" in export_set, lambda: export_weibo_body(ctx, files["weibo_body"])
+    )
+    if body_path is not None:
+        files["weibo_body"] = body_path
+
+    def build_docx() -> tuple[Any, Any]:
+        _remove_generated_docx(run_dir)
+        paths = export_docx(ctx, run_dir / "weekly_report.docx")
+        summary_docx = export_weekly_report_sum_docx(
+            selected_posts,
+            run_dir / "weekly_report_sum.docx",
+            title=report_title,
+            leaderboards=leaderboards,
+            preselected=True,
+            ctx=ctx,
+        )
+        return paths, summary_docx
+
+    docx_result = run_export("DOCX", "docx" in export_set, build_docx)
+    if docx_result is not None:
+        files["docx"], files["docx_sum"] = docx_result
+
+    run_export(
+        "Markdown",
+        "markdown" in export_set,
+        lambda: export_weekly_report_md(
+            selected_posts,
+            files["markdown"],
+            title=report_title,
+            leaderboards=leaderboards,
+            preselected=True,
+        ),
+    )
+    image_result = run_export("长图报告", "long_images" in export_set, lambda: export_image_report(ctx))
+    if image_result is not None:
+        files["image_report_preview"] = image_result.preview
+        files["image_report_pages"] = image_result.pages
+        files["image_report_metadata"] = image_result.metadata
+        warnings.extend(image_result.warnings)
+
+    # Only a total loss is worth an error; anything less leaves the user with
+    # usable files and a manifest that records what is missing.
+    if requested and len(failed_exports) == len(requested):
+        raise ReexportError(
+            "重新生成失败",
+            "请关闭正在打开的 Word/Excel 文件，并确认导出目录可写后重试。",
+        )
 
     if not files["docx"]:
         previous_manifest = read_manifest(run_dir, {}) or {}
@@ -155,13 +192,17 @@ def reexport_from_cache(
         warnings=[],
         failed_images=len((images_manifest or {}).get("failed", [])) if isinstance(images_manifest, dict) else 0,
         previous=previous,
-        status="reexported",
+        status="export_failed" if failed_exports else "reexported",
     )
     write_manifest(run_dir, manifest)
     store.write_stage("run_config", export_config)
     store.write_stage("selected_posts", selected_posts)
+    message = "重新生成完成"
+    if failed_exports:
+        message = f"重新生成部分完成：{'、'.join(failed_exports)} 未能生成，其余已更新。"
     return {
-        "message": "重新生成完成",
+        "message": message,
+        "failed_export_types": failed_exports,
         "manifest": sanitize_for_cache(manifest),
         "result": _manifest_to_result(run_dir, manifest),
     }

@@ -7,7 +7,7 @@ import sys
 import threading
 import webbrowser
 
-from core.job import console_log
+from core.job import console_log, shutdown_current_job
 from server.http_server import APP_HOST, APP_PORT, create_server
 
 
@@ -60,6 +60,9 @@ def main() -> None:
     except KeyboardInterrupt:
         console_log("正在关闭服务...")
     finally:
+        # Let the crawl worker unwind so its cleanup actually runs; it is a
+        # daemon thread and would otherwise vanish with the process.
+        shutdown_current_job()
         server.server_close()
 
 

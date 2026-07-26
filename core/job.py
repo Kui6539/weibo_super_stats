@@ -243,6 +243,9 @@ class CrawlJob:
         self.report_title = format_report_title_with_issue(build_report_title("", self.cfg.super_topic), self.cfg.issue)
 
         self._candidate_posts: list[dict] = []
+        # True once the cache holds enough to regenerate reports offline; from
+        # that point a failure cleans up the half-written output only.
+        self._cache_recoverable = False
         self._lock = threading.RLock()
         self._selection_event = threading.Event()
         self.thread = threading.Thread(target=self._run, name=f"crawl-{self.id[:8]}", daemon=True)
@@ -769,8 +772,9 @@ class CrawlJob:
                 self.updated_at = datetime.now()
             self.add_log(f"等待人工筛选：候选 {len(candidates)} 条，默认勾选前 {target} 条。", stage="selection")
 
-            while not self._selection_event.wait(0.5):
-                self.check_cancelled()
+            # request_cancel sets this event too, so a plain wait covers both
+            # "user submitted a selection" and "user cancelled".
+            self._selection_event.wait()
             self.check_cancelled()
             with self._lock:
                 if self.status == "cancelled":
@@ -781,6 +785,9 @@ class CrawlJob:
             if not selected_posts:
                 raise CrawlError("没有可导出的入选帖子。")
             self._write_cache_stage(cache_store, "selected_posts", selected_posts, critical=True)
+            # From here the cache holds everything reexport needs, so a later
+            # failure must not throw away the crawl. See _cleanup_incomplete_artifacts.
+            self._cache_recoverable = True
             self.add_log(f"人工筛选完成：最终导出 {len(selected_posts)} 条。", level="success", stage="selection")
             self.check_cancelled()
 
@@ -835,59 +842,12 @@ class CrawlJob:
             report_md_path = run_dir / "weekly_report.md"
             weibo_body_path = run_dir / "weibo_body.txt"
 
-            self.check_cancelled()
-            export_posts_xlsx(selected_posts, xlsx_path)
-            export_current += 1
-            self._mark_export_result("XLSX", xlsx_path, export_current, export_total)
-            self.check_cancelled()
-            export_posts_csv(selected_posts, csv_path)
-            export_current += 1
-            self._mark_export_result("CSV", csv_path, export_current, export_total)
-            self.check_cancelled()
-            write_summary_txt(
-                summary,
-                txt_path,
-                leaderboards=leaderboards,
-                active_period=active_period,
-                all_posts_summary=all_posts_summary,
-                carryover_hours=self.cfg.carryover_hours,
-            )
-            export_current += 1
-            self._mark_export_result("summary txt", txt_path, export_current, export_total)
-            self.check_cancelled()
-            report_docx_paths = export_weekly_report_docx(
-                selected_posts,
-                report_docx_path,
-                title=self.report_title,
-                leaderboards=leaderboards,
-                preselected=True,
-            )
-            export_current += 1
-            self._mark_export_result("DOCX", report_docx_path, export_current, export_total)
-            self.check_cancelled()
-            report_sum_docx = export_weekly_report_sum_docx(
-                selected_posts,
-                report_sum_docx_path,
-                title=self.report_title,
-                leaderboards=leaderboards,
-                preselected=True,
-            )
-            export_current += 1
-            self._mark_export_result("总 DOCX", report_sum_docx, export_current, export_total)
-            self.check_cancelled()
-            export_weekly_report_md(
-                selected_posts,
-                report_md_path,
-                title=self.report_title,
-                leaderboards=leaderboards,
-                preselected=True,
-            )
-            export_current += 1
-            self._mark_export_result("Markdown", report_md_path, export_current, export_total)
-
-            warnings = []
+            warnings: list[str] = []
             if failed_image_count:
                 warnings.append(f"约 {failed_image_count} 张图片未成功保存，可在导出目录中检查 images 文件夹。")
+            # Built before the first exporter so image-embedding warnings from
+            # Excel and DOCX reach the manifest instead of being dropped into a
+            # throwaway context.
             export_ctx = ExportContext(
                 run_dir=run_dir,
                 selected_posts=selected_posts,
@@ -895,53 +855,145 @@ class CrawlJob:
                 config=self._run_config_payload(run_dir) | {"candidate_count": len(candidates), "leaderboards": leaderboards},
                 stats=summary,
                 images_manifest=images_manifest,
+                warnings=warnings,
             )
+            failed_exports: list[str] = []
+
+            def export_step(label: str, target: Any, fn: Any) -> Any:
+                """Run one exporter; a locked file must not kill the others.
+
+                On Windows the common failure is the user still having last
+                week's xlsx or docx open. Losing the whole export -- and, before
+                this, the entire crawl -- over that is not a reasonable trade.
+                """
+                nonlocal export_current
+                self.check_cancelled()
+                try:
+                    value = fn()
+                except JobCancelled:
+                    raise
+                except (OSError, ValueError) as err:
+                    failed_exports.append(label)
+                    detail = "文件可能正被其他程序打开" if isinstance(err, OSError) else type(err).__name__
+                    warnings.append(f"{label} 导出失败（{detail}），其余格式已继续生成。")
+                    self.add_log(f"{label} 导出失败：{type(err).__name__}: {err}", level="warning", stage="export")
+                    export_current += 1
+                    return None
+                export_current += 1
+                self._mark_export_result(label, target if value is None else value, export_current, export_total)
+                return value
+
+            export_step("XLSX", xlsx_path, lambda: export_posts_xlsx(selected_posts, xlsx_path))
+            export_step("CSV", csv_path, lambda: export_posts_csv(selected_posts, csv_path))
+            export_step(
+                "summary txt",
+                txt_path,
+                lambda: write_summary_txt(
+                    summary,
+                    txt_path,
+                    leaderboards=leaderboards,
+                    active_period=active_period,
+                    all_posts_summary=all_posts_summary,
+                    carryover_hours=self.cfg.carryover_hours,
+                ),
+            )
+            report_docx_paths = export_step(
+                "DOCX",
+                report_docx_path,
+                lambda: export_weekly_report_docx(
+                    selected_posts,
+                    report_docx_path,
+                    title=self.report_title,
+                    leaderboards=leaderboards,
+                    preselected=True,
+                ),
+            ) or []
+            report_sum_docx = export_step(
+                "总 DOCX",
+                report_sum_docx_path,
+                lambda: export_weekly_report_sum_docx(
+                    selected_posts,
+                    report_sum_docx_path,
+                    title=self.report_title,
+                    leaderboards=leaderboards,
+                    preselected=True,
+                ),
+            )
+            export_step(
+                "Markdown",
+                report_md_path,
+                lambda: export_weekly_report_md(
+                    selected_posts,
+                    report_md_path,
+                    title=self.report_title,
+                    leaderboards=leaderboards,
+                    preselected=True,
+                ),
+            )
+
             files = {
-                "markdown": report_md_path,
+                "markdown": report_md_path if report_md_path.exists() else None,
                 "docx": report_docx_paths,
                 "docx_sum": report_sum_docx,
-                "xlsx": xlsx_path,
-                "csv": csv_path,
-                "summary": txt_path,
+                "xlsx": xlsx_path if xlsx_path.exists() else None,
+                "csv": csv_path if csv_path.exists() else None,
+                "summary": txt_path if txt_path.exists() else None,
                 "weibo_body": None,
                 "images": image_dir,
                 "image_report_preview": None,
                 "image_report_pages": [],
                 "image_report_metadata": None,
             }
-            files["weibo_body"] = export_weibo_body(export_ctx, weibo_body_path)
-            export_current += 1
-            self._mark_export_result("微博正文", files["weibo_body"], export_current, export_total)
-            self.check_cancelled()
-            image_report = export_image_report(export_ctx)
-            files["image_report_preview"] = image_report.preview
-            files["image_report_pages"] = image_report.pages
-            files["image_report_metadata"] = image_report.metadata
-            warnings.extend(image_report.warnings)
-            export_current += 1
-            self._mark_export_result("长图报告", image_report.preview, export_current, export_total)
+            files["weibo_body"] = export_step(
+                "微博正文", weibo_body_path, lambda: export_weibo_body(export_ctx, weibo_body_path)
+            )
+            image_report = export_step("长图报告", None, lambda: export_image_report(export_ctx))
+            if image_report is not None:
+                files["image_report_preview"] = image_report.preview
+                files["image_report_pages"] = image_report.pages
+                files["image_report_metadata"] = image_report.metadata
+                warnings.extend(image_report.warnings)
 
             self.add_log(f"抓取完成，共 {summary['total_posts']} 条帖子。", level="success", stage="export")
-            self.add_log(f"Excel 已保存：{xlsx_path}", level="success", stage="export")
-            self.add_log(f"CSV 已保存：{csv_path}", level="success", stage="export")
+            if xlsx_path.exists():
+                self.add_log(f"Excel 已保存：{xlsx_path}", level="success", stage="export")
+            if csv_path.exists():
+                self.add_log(f"CSV 已保存：{csv_path}", level="success", stage="export")
             for path in report_docx_paths:
                 size_mb = path.stat().st_size / 1000 / 1000 if path.exists() else 0
                 self.add_log(f"DOCX 已保存：{path}（{size_mb:.2f} MB）", level="success", stage="export")
-            size_mb = report_sum_docx.stat().st_size / 1000 / 1000 if report_sum_docx.exists() else 0
-            self.add_log(f"总 DOCX 已保存：{report_sum_docx}（{size_mb:.2f} MB）", level="success", stage="export")
-            self.add_log(f"MD 已保存：{report_md_path}", level="success", stage="export")
-            self.add_log(f"汇总已保存：{txt_path}", level="success", stage="export")
-            self.add_log(f"微博正文已保存：{files['weibo_body']}", level="success", stage="export")
-            self.add_log(f"长图预览已保存：{image_report.preview}", level="success", stage="export")
-            for path in image_report.pages:
-                self.add_log(f"长图 JPG 已保存：{path}", level="success", stage="export")
+            if report_sum_docx and Path(report_sum_docx).exists():
+                size_mb = Path(report_sum_docx).stat().st_size / 1000 / 1000
+                self.add_log(f"总 DOCX 已保存：{report_sum_docx}（{size_mb:.2f} MB）", level="success", stage="export")
+            if report_md_path.exists():
+                self.add_log(f"MD 已保存：{report_md_path}", level="success", stage="export")
+            if txt_path.exists():
+                self.add_log(f"汇总已保存：{txt_path}", level="success", stage="export")
+            if files["weibo_body"]:
+                self.add_log(f"微博正文已保存：{files['weibo_body']}", level="success", stage="export")
+            if image_report is not None:
+                self.add_log(f"长图预览已保存：{image_report.preview}", level="success", stage="export")
+                for path in image_report.pages:
+                    self.add_log(f"长图 JPG 已保存：{path}", level="success", stage="export")
+                for warning in image_report.warnings:
+                    self.add_log(warning, level="warning", stage="export")
             if failed_image_count:
                 self.add_log(f"图片下载警告：约 {failed_image_count} 张图片未成功保存。", level="warning", stage="export")
-            for warning in image_report.warnings:
-                self.add_log(warning, level="warning", stage="export")
+            if failed_exports:
+                self.add_log(
+                    f"以下格式未能生成：{'、'.join(failed_exports)}。关闭占用这些文件的程序后，可在历史任务中『重新生成报告』补齐。",
+                    level="warning",
+                    stage="export",
+                )
             self.add_log(f"本次导出目录：{run_dir}", level="success", stage="export")
 
-            manifest = build_manifest(export_ctx, files, warnings=warnings, failed_images=failed_image_count)
+            manifest = build_manifest(
+                export_ctx,
+                files,
+                warnings=warnings,
+                failed_images=failed_image_count,
+                status="export_failed" if failed_exports else "completed",
+            )
             manifest_path = write_manifest(run_dir, manifest)
             try:
                 add_history_item_from_manifest(run_dir, manifest)
@@ -970,18 +1022,24 @@ class CrawlJob:
             self._set_completed(result)
         except JobCancelled as err:
             self.add_log(str(err), level="warning", stage="cancelled")
-            self._cleanup_incomplete_artifacts(run_dir, cache_store, reason="cancelled")
+            # An explicit cancel really does mean "throw it all away".
+            self._cleanup_incomplete_artifacts(run_dir, cache_store, reason="cancelled", keep_cache=False)
             self._set_cancelled(str(err))
         except CrawlError as err:
             self.add_log(f"任务失败：{err}", level="error", stage="failed")
             self._cleanup_incomplete_artifacts(run_dir, cache_store, reason="failed")
-            self._set_failed(str(err))
+            self._set_failed(self._failure_message(str(err)))
         except Exception as err:
             message = f"{type(err).__name__}: {err}"
-            friendly = f"任务执行失败：{message}"
+            console_log(f"任务 {self.id} 失败：{message}")
             self.add_log(f"任务失败：{message}", level="error", stage="failed")
             self._cleanup_incomplete_artifacts(run_dir, cache_store, reason="failed")
-            self._set_failed(friendly)
+            self._set_failed(self._failure_message(f"任务执行失败：{message}"))
+
+    def _failure_message(self, message: str) -> str:
+        if not self._cache_recoverable:
+            return message
+        return f"{message} 抓取数据已保留在缓存中，可在历史任务里直接『重新生成报告』，无需重新抓取。"
 
     def _run_config_payload(self, run_dir: Path) -> dict[str, Any]:
         return sanitize_for_cache(
@@ -1069,11 +1127,14 @@ class CrawlJob:
         cache_store: CacheStore | None,
         *,
         reason: str,
+        keep_cache: bool | None = None,
     ) -> None:
+        preserve = self._cache_recoverable if keep_cache is None else keep_cache
         cleanup = cleanup_incomplete_artifacts(
             run_dir=run_dir or self.run_dir,
             output_dir=self.output_dir,
             cache_store=cache_store,
+            keep_cache=preserve,
         )
         self.artifact_cleanup = cleanup
         if reason == "cancelled":
@@ -1085,6 +1146,8 @@ class CrawlJob:
         action = "取消清理" if reason == "cancelled" else "失败清理"
         if deleted:
             self.add_log(f"已自动清理未完成任务目录与缓存：{', '.join(deleted)}", level="success", stage=stage)
+        if preserve:
+            self.add_log("已保留本次抓取缓存，可在历史任务中重新生成报告。", level="warning", stage=stage)
         if skipped:
             self.add_log(f"{action}跳过：{'; '.join(skipped)}", level="warning", stage=stage)
         if errors:
@@ -1095,12 +1158,22 @@ def cleanup_incomplete_artifacts(
     run_dir: Path | None,
     output_dir: Path,
     cache_store: CacheStore | None = None,
+    keep_cache: bool = False,
 ) -> dict[str, Any]:
+    """Remove the artifacts of a run that did not finish.
+
+    ``keep_cache`` is set once the run has produced a cache that reexport can
+    work from. Deleting it then would force a full re-crawl over what is
+    usually a locked output file, and it is exactly the situation the offline
+    reexport path exists for -- so the run directory is kept too, otherwise the
+    history panel has no entry to offer the user.
+    """
     result: dict[str, Any] = {
         "run_dir": str(run_dir) if run_dir else "",
         "deleted_dirs": [],
         "skipped": [],
         "errors": [],
+        "kept_cache": bool(keep_cache),
     }
     if run_dir is None:
         result["skipped"].append("尚未创建运行目录")
@@ -1109,6 +1182,9 @@ def cleanup_incomplete_artifacts(
     resolved_run_dir = run_dir.resolve()
     resolved_output_dir = output_dir.resolve()
     result["run_dir"] = str(resolved_run_dir)
+    if keep_cache:
+        result["skipped"].append(f"已保留可重新生成报告的缓存与目录：{resolved_run_dir}")
+        return result
     if not _is_cancel_run_dir_deletable(resolved_run_dir, resolved_output_dir):
         result["skipped"].append(f"运行目录不符合自动清理规则：{resolved_run_dir}")
         return result
@@ -1153,7 +1229,9 @@ def _is_cancel_run_dir_deletable(run_dir: Path, output_dir: Path) -> bool:
         except Exception:
             manifest = {}
         status = str((manifest or {}).get("status") or "").strip().lower() if isinstance(manifest, dict) else ""
-        if status in {"completed", "reexported"}:
+        # export_failed still carries a usable crawl plus whatever formats did
+        # get written; it is a reexport candidate, not garbage.
+        if status in {"completed", "reexported", "export_failed", "partial"}:
             return False
     return True
 
@@ -1219,10 +1297,48 @@ def create_job(cfg: CrawlConfig, output_dir: Path) -> CrawlJob:
     global _current_job
     with _job_lock:
         if _current_job and _current_job.status in ACTIVE_STATUSES:
-            raise RuntimeError("已有任务正在运行，请等待完成后再开始新的任务。")
+            raise RuntimeError(_busy_message(_current_job))
         _current_job = CrawlJob(cfg, output_dir)
         _current_job.start()
         return _current_job
+
+
+def _busy_message(job: CrawlJob) -> str:
+    """Say what the blocking task is actually doing.
+
+    awaiting_selection counts as active and has no timeout, so closing the tab
+    parks a task there forever. A bare "a task is already running" leaves the
+    user thinking the tool has hung rather than that it is waiting on them.
+    """
+    label = STAGE_LABELS.get(job.stage, job.stage or "进行中")
+    started = job.started_at.strftime("%H:%M") if getattr(job, "started_at", None) else ""
+    when = f"（开始于 {started}）" if started else ""
+    if job.status == "awaiting_selection":
+        return f"已有任务停留在『{label}』{when}，请先完成候选筛选，或取消该任务后再开始新的任务。"
+    return f"已有任务正在『{label}』{when}，请等待完成或取消后再开始新的任务。"
+
+
+def shutdown_current_job(timeout: float = 10.0) -> bool:
+    """Ask a running job to stop and wait for its cleanup to finish.
+
+    The worker is a daemon thread, so process exit would otherwise kill it
+    mid-step: no except/finally runs, the cancel-cleanup path never fires, and
+    a partially written cache JSON can be left behind.
+    """
+    job = get_current_job()
+    if not job or job.status not in ACTIVE_STATUSES:
+        return True
+    console_log("正在等待当前任务安全停止...")
+    job.request_cancel("服务正在关闭，任务已取消。")
+    thread = getattr(job, "thread", None)
+    if thread is None or not thread.is_alive():
+        return True
+    thread.join(timeout=timeout)
+    if thread.is_alive():
+        console_log("任务未能在超时前停止，仍会退出；下次启动可用『扫描 output』清理残留目录。")
+        return False
+    console_log("当前任务已安全停止。")
+    return True
 
 
 def cancel_current_job() -> tuple[bool, str, CrawlJob | None]:
