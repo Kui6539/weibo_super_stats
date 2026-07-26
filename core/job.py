@@ -28,6 +28,7 @@ from core.events import (
     clamp_percent,
     infer_log_level,
     optional_int,
+    redact_cookie_values,
     sanitize_event_payload,
     stage_label,
 )
@@ -259,6 +260,11 @@ class CrawlJob:
         timestamp = datetime.now().strftime("%H:%M:%S")
         clean_stage = stage if stage in STAGE_LABELS else self.stage
         clean_level = level or infer_log_level(str(message))
+        # Last line of defence: logs reach /api/status and the front end can
+        # save them to a file, so a credential that slipped into a message --
+        # typically inside an exception carrying a request header -- must not
+        # survive this far.
+        message = redact_cookie_values(str(message))
         with self._lock:
             self.logs.append({"time": timestamp, "message": str(message)})
             if len(self.logs) > 1000:

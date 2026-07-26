@@ -66,9 +66,30 @@ def sanitize_event_payload(payload: dict[str, Any] | None) -> dict[str, Any]:
                 sanitize_event_payload(item) if isinstance(item, dict) else item
                 for item in value
             ]
+        elif isinstance(value, str):
+            clean[key] = redact_cookie_values(value)
         else:
             clean[key] = value
     return clean
+
+
+# Weibo's login cookie names. SUB alone authenticates a session, so any of these
+# appearing in text is a credential regardless of the key it sits under.
+COOKIE_VALUE_RE = re.compile(
+    r"\b(SUB|SUBP|SCF|WBPSESS|ALF|SSOLoginState|SUBP|XSRF-TOKEN)=[^;\s\"']+",
+    flags=re.IGNORECASE,
+)
+
+
+def redact_cookie_values(text: str) -> str:
+    """Strip cookie values out of free text.
+
+    sanitize_event_payload only ever filtered by key, so a credential pasted
+    into a message -- an exception string carrying a request header, say --
+    passed straight through into /api/status, which the front end can download
+    as a log file.
+    """
+    return COOKIE_VALUE_RE.sub(lambda m: f"{m.group(1)}=***", str(text or ""))
 
 
 def normalize_stage(stage: str | None) -> str:
