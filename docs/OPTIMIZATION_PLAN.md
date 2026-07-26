@@ -4,6 +4,30 @@
 
 本文档按「批次」组织，每个批次对应一个可独立提交的 PR。批次内条目按依赖顺序排列。
 
+## 落地进度
+
+分支 `optimize/security-and-robustness` 已完成批次一至批次六，测试从 154 个增加到 189 个，`ruff check` 全绿。
+
+| 批次 | 状态 | 提交 |
+| --- | --- | --- |
+| 一 · 本地 API 安全闭环 | 已完成 | `fix(server): close the local API's CSRF, rebinding and traversal holes` |
+| 二 · 仓库卫生 | 已完成（`frontend/` 未删除，见下） | `chore(security): ignore credential backups...` |
+| 三 · 数据不丢失 | 已完成 | `fix(core): make config/history writes atomic...`、`fix(job): a failed export no longer destroys the crawl` |
+| 四 · 抓取健壮性 | 已完成 | `fix(crawler): retry, throttle and stop hiding degraded results` |
+| 五 · 测试与 CI | 已完成 | `test: stop leaking cache directories...`、`chore: add CI, ruff config...` |
+| 六 · 性能 | 已完成 | `perf(web): stop re-rendering...`、`perf(export): stop rebuilding DOCX per post...` |
+| 七 · 可维护性重构 | 未做 | 需要较大改动面，建议单独排期 |
+| 八 · 打磨项 | 部分完成 | 见下方各条目 |
+
+批次七（`job.py` / `crawler.py` 拆分、进度改结构化事件、`cookie_helper` 依赖方向）刻意留下：这些是大范围重构，风险收益比不适合和上述修复混在一起提交。
+
+**留给你决定的两件事：**
+
+1. **`frontend/` 目录未删除**，只加进了 `.gitignore`。它确认是零源码空壳（`src/` 下五个子目录全空、无 `package.json`、159 MB `node_modules`），但删除不可逆，所以没有替你做。要清掉直接 `rmdir /s /q frontend`。
+2. **`assets/weibo_emoticons` 的 vendor 决策未做**（批次二 2.4）。现状「半缓存半资产」维持原样，需要你在两个选项间选一个。
+
+另外已顺手清理了项目根 `cache/` 下 160 个测试泄漏的 `tmp*` 目录（187 → 27）。剩下 27 个全部是时间戳运行目录，一律未动；其中 `20260511_010101`、`20260512_010101`、`20260512_020202` 三个看起来是旧测试残留的孤儿（output 下无对应目录），你可以自行确认后删除。
+
 ## 结论
 
 项目结构清晰、分层意识良好（`modules/` 纯逻辑、`export/` 无网络、cache/reexport 离线恢复设计都很扎实），测试 154 个用例 11 秒全绿且完全离线。主要问题集中在三处：
