@@ -15,6 +15,7 @@ from export.excel_exporter import export_excel
 from export.image_report import export_image_report
 from export.manifest import build_manifest, write_manifest
 from export.markdown_exporter import export_weekly_report_md
+from export.pipeline import ExportTask, run_export_tasks
 from export.summary_exporter import analyze_active_period, build_summary, write_summary_txt
 from export.weibo_body_exporter import export_weibo_body
 from modules.comments.ranking import build_comment_leaderboards
@@ -90,48 +91,6 @@ def reexport_from_cache(
         reexport=True,
     )
 
-    requested: list[str] = []
-    failed_exports: list[str] = []
-
-    def run_export(label: str, wanted: bool, fn: Any) -> Any:
-        """Run one exporter, isolating its failure from the others.
-
-        A single locked file used to abort the whole regeneration, so a user
-        who merely had weibo_posts.xlsx open could not rebuild the Markdown
-        either -- and the manifest was left untouched on top of that.
-        """
-        if not wanted:
-            return None
-        requested.append(label)
-        try:
-            return fn()
-        except (OSError, ValueError) as err:
-            failed_exports.append(label)
-            detail = "文件可能正被其他程序打开" if isinstance(err, OSError) else type(err).__name__
-            warnings.append(f"{label} 重新生成失败（{detail}），其余格式已继续生成。")
-            return None
-
-    _remove_legacy_report_files(run_dir)
-    run_export("Excel", "excel" in export_set or "xlsx" in export_set, lambda: export_excel(ctx, files["xlsx"]))
-    run_export("CSV", "csv" in export_set, lambda: export_posts_csv(selected_posts, files["csv"]))
-    run_export(
-        "统计摘要",
-        "summary" in export_set,
-        lambda: write_summary_txt(
-            summary,
-            files["summary"],
-            leaderboards=leaderboards,
-            active_period=active_period,
-            all_posts_summary=all_posts_summary,
-            carryover_hours=int(run_config.get("carryover_hours") or 0) if isinstance(run_config, dict) else 0,
-        ),
-    )
-    body_path = run_export(
-        "微博正文", "weibo_body" in export_set, lambda: export_weibo_body(ctx, files["weibo_body"])
-    )
-    if body_path is not None:
-        files["weibo_body"] = body_path
-
     def build_docx() -> tuple[Any, Any]:
         _remove_generated_docx(run_dir)
         paths = export_docx(ctx, run_dir / "weekly_report.docx")
@@ -145,22 +104,66 @@ def reexport_from_cache(
         )
         return paths, summary_docx
 
-    docx_result = run_export("DOCX", "docx" in export_set, build_docx)
+    wanted_tasks = [
+        (
+            "excel" in export_set or "xlsx" in export_set,
+            ExportTask("Excel", lambda: export_excel(ctx, files["xlsx"]), files["xlsx"]),
+        ),
+        ("csv" in export_set, ExportTask("CSV", lambda: export_posts_csv(selected_posts, files["csv"]), files["csv"])),
+        (
+            "summary" in export_set,
+            ExportTask(
+                "统计摘要",
+                lambda: write_summary_txt(
+                    summary,
+                    files["summary"],
+                    leaderboards=leaderboards,
+                    active_period=active_period,
+                    all_posts_summary=all_posts_summary,
+                    carryover_hours=int(run_config.get("carryover_hours") or 0)
+                    if isinstance(run_config, dict)
+                    else 0,
+                ),
+                files["summary"],
+            ),
+        ),
+        (
+            "weibo_body" in export_set,
+            ExportTask("微博正文", lambda: export_weibo_body(ctx, files["weibo_body"]), files["weibo_body"]),
+        ),
+        ("docx" in export_set, ExportTask("DOCX", build_docx)),
+        (
+            "markdown" in export_set,
+            ExportTask(
+                "Markdown",
+                lambda: export_weekly_report_md(
+                    selected_posts,
+                    files["markdown"],
+                    title=report_title,
+                    leaderboards=leaderboards,
+                    preselected=True,
+                ),
+                files["markdown"],
+            ),
+        ),
+        ("long_images" in export_set, ExportTask("长图报告", lambda: export_image_report(ctx))),
+    ]
+    tasks = [task for wanted, task in wanted_tasks if wanted]
+
+    _remove_legacy_report_files(run_dir)
+    outcome = run_export_tasks(tasks, action="重新生成")
+    warnings.extend(outcome.warnings)
+    failed_exports = outcome.failed_labels
+
+    body_path = outcome.results.get("微博正文")
+    if body_path is not None:
+        files["weibo_body"] = body_path
+
+    docx_result = outcome.results.get("DOCX")
     if docx_result is not None:
         files["docx"], files["docx_sum"] = docx_result
 
-    run_export(
-        "Markdown",
-        "markdown" in export_set,
-        lambda: export_weekly_report_md(
-            selected_posts,
-            files["markdown"],
-            title=report_title,
-            leaderboards=leaderboards,
-            preselected=True,
-        ),
-    )
-    image_result = run_export("长图报告", "long_images" in export_set, lambda: export_image_report(ctx))
+    image_result = outcome.results.get("长图报告")
     if image_result is not None:
         files["image_report_preview"] = image_result.preview
         files["image_report_pages"] = image_result.pages
@@ -169,7 +172,7 @@ def reexport_from_cache(
 
     # Only a total loss is worth an error; anything less leaves the user with
     # usable files and a manifest that records what is missing.
-    if requested and len(failed_exports) == len(requested):
+    if tasks and len(failed_exports) == len(tasks):
         raise ReexportError(
             "重新生成失败",
             "请关闭正在打开的 Word/Excel 文件，并确认导出目录可写后重试。",

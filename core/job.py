@@ -49,6 +49,7 @@ from crawler import (
 from export.context import ExportContext
 from export.image_report import export_image_report
 from export.manifest import build_manifest, write_manifest
+from export.pipeline import ExportTask, run_export_tasks
 from export.summary_exporter import analyze_active_period, build_summary
 from export.weibo_body_exporter import export_weibo_body
 from modules.comments.ranking import build_comment_leaderboards
@@ -745,79 +746,82 @@ class CrawlJob:
                 images_manifest=images_manifest,
                 warnings=warnings,
             )
-            failed_exports: list[str] = []
-
-            def export_step(label: str, target: Any, fn: Any) -> Any:
-                """Run one exporter; a locked file must not kill the others.
-
-                On Windows the common failure is the user still having last
-                week's xlsx or docx open. Losing the whole export -- and, before
-                this, the entire crawl -- over that is not a reasonable trade.
-                """
-                nonlocal export_current
-                self.check_cancelled()
-                try:
-                    value = fn()
-                except JobCancelled:
-                    raise
-                except (OSError, ValueError) as err:
-                    failed_exports.append(label)
-                    detail = "文件可能正被其他程序打开" if isinstance(err, OSError) else type(err).__name__
-                    warnings.append(f"{label} 导出失败（{detail}），其余格式已继续生成。")
-                    self.add_log(f"{label} 导出失败：{type(err).__name__}: {err}", level="warning", stage="export")
-                    export_current += 1
-                    return None
-                export_current += 1
-                self._mark_export_result(label, target if value is None else value, export_current, export_total)
-                return value
-
-            export_step("XLSX", xlsx_path, lambda: export_posts_xlsx(selected_posts, xlsx_path))
-            export_step("CSV", csv_path, lambda: export_posts_csv(selected_posts, csv_path))
-            export_step(
-                "summary txt",
-                txt_path,
-                lambda: write_summary_txt(
-                    summary,
+            tasks = [
+                ExportTask("XLSX", lambda: export_posts_xlsx(selected_posts, xlsx_path), xlsx_path),
+                ExportTask("CSV", lambda: export_posts_csv(selected_posts, csv_path), csv_path),
+                ExportTask(
+                    "summary txt",
+                    lambda: write_summary_txt(
+                        summary,
+                        txt_path,
+                        leaderboards=leaderboards,
+                        active_period=active_period,
+                        all_posts_summary=all_posts_summary,
+                        carryover_hours=self.cfg.carryover_hours,
+                    ),
                     txt_path,
-                    leaderboards=leaderboards,
-                    active_period=active_period,
-                    all_posts_summary=all_posts_summary,
-                    carryover_hours=self.cfg.carryover_hours,
                 ),
-            )
-            report_docx_paths = export_step(
-                "DOCX",
-                report_docx_path,
-                lambda: export_weekly_report_docx(
-                    selected_posts,
+                ExportTask(
+                    "DOCX",
+                    lambda: export_weekly_report_docx(
+                        selected_posts,
+                        report_docx_path,
+                        title=self.report_title,
+                        leaderboards=leaderboards,
+                        preselected=True,
+                    ),
                     report_docx_path,
-                    title=self.report_title,
-                    leaderboards=leaderboards,
-                    preselected=True,
                 ),
-            ) or []
-            report_sum_docx = export_step(
-                "总 DOCX",
-                report_sum_docx_path,
-                lambda: export_weekly_report_sum_docx(
-                    selected_posts,
+                ExportTask(
+                    "总 DOCX",
+                    lambda: export_weekly_report_sum_docx(
+                        selected_posts,
+                        report_sum_docx_path,
+                        title=self.report_title,
+                        leaderboards=leaderboards,
+                        preselected=True,
+                    ),
                     report_sum_docx_path,
-                    title=self.report_title,
-                    leaderboards=leaderboards,
-                    preselected=True,
                 ),
-            )
-            export_step(
-                "Markdown",
-                report_md_path,
-                lambda: export_weekly_report_md(
-                    selected_posts,
+                ExportTask(
+                    "Markdown",
+                    lambda: export_weekly_report_md(
+                        selected_posts,
+                        report_md_path,
+                        title=self.report_title,
+                        leaderboards=leaderboards,
+                        preselected=True,
+                    ),
                     report_md_path,
-                    title=self.report_title,
-                    leaderboards=leaderboards,
-                    preselected=True,
                 ),
+                ExportTask("微博正文", lambda: export_weibo_body(export_ctx, weibo_body_path), weibo_body_path),
+                ExportTask("长图报告", lambda: export_image_report(export_ctx)),
+            ]
+
+            def on_export_done(task: ExportTask, value: Any) -> None:
+                nonlocal export_current
+                export_current += 1
+                self._mark_export_result(
+                    task.label, task.target if value is None else value, export_current, export_total
+                )
+
+            def on_export_failed(task: ExportTask, err: Exception) -> None:
+                nonlocal export_current
+                export_current += 1
+                self.add_log(f"{task.label} 导出失败：{type(err).__name__}: {err}", level="warning", stage="export")
+
+            outcome = run_export_tasks(
+                tasks,
+                action="导出",
+                check_cancelled=self.check_cancelled,
+                on_success=on_export_done,
+                on_failure=on_export_failed,
             )
+            warnings.extend(outcome.warnings)
+            failed_exports = outcome.failed_labels
+            report_docx_paths = outcome.result("DOCX", [])
+            report_sum_docx = outcome.results.get("总 DOCX")
+            image_report = outcome.results.get("长图报告")
 
             files = {
                 "markdown": report_md_path if report_md_path.exists() else None,
@@ -826,16 +830,12 @@ class CrawlJob:
                 "xlsx": xlsx_path if xlsx_path.exists() else None,
                 "csv": csv_path if csv_path.exists() else None,
                 "summary": txt_path if txt_path.exists() else None,
-                "weibo_body": None,
+                "weibo_body": outcome.results.get("微博正文"),
                 "images": image_dir,
                 "image_report_preview": None,
                 "image_report_pages": [],
                 "image_report_metadata": None,
             }
-            files["weibo_body"] = export_step(
-                "微博正文", weibo_body_path, lambda: export_weibo_body(export_ctx, weibo_body_path)
-            )
-            image_report = export_step("长图报告", None, lambda: export_image_report(export_ctx))
             if image_report is not None:
                 files["image_report_preview"] = image_report.preview
                 files["image_report_pages"] = image_report.pages
