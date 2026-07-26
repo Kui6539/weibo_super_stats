@@ -10,13 +10,19 @@ __pycache__/
 
 output/
 cache/
+debug/
 .edge_cdp_profile/
 .chrome_cdp_profile/
 dist/
 weibo_stats_config.json
+weibo_stats_config.*.json
 weibo_stats_history.json
-weibo_stats_history.broken.json
+weibo_stats_history.*.json
 *.log
+logs/
+
+node_modules/
+frontend/
 
 .env
 .env.*
@@ -26,3 +32,6 @@ Thumbs.db
 
 .playwright-mcp/
 .claude/
+.vscode/
+.ruff_cache/
+.pytest_cache/
