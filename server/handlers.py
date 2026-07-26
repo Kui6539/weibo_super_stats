@@ -31,6 +31,7 @@ from core.config import (
     get_presets_payload,
     load_saved_config,
     parse_datetime_local,
+    resolve_payload_cookie,
     save_user_config,
     save_preset,
     validate_config_payload,
@@ -55,7 +56,7 @@ from core.job import (
     serialize_job,
 )
 from core.output_cleanup import cleanup_output, cleanup_preview, output_summary
-from core.paths import is_relative_to, normalize_output_dir, safe_resolve
+from core.paths import RUN_DIR_RE, is_relative_to, normalize_output_dir, safe_resolve
 from crawler import parse_super_topic_id
 from export.reexport import reexport_from_cache
 from modules.crawler_client import WeiboClient
@@ -68,6 +69,12 @@ from modules.topic import (
     normalize_super_topic_name,
 )
 from modules.weibo_chaohua_api import CHAOHUA_API_URL, extract_chaohua_topic_name, initial_chaohua_params
+from server.guards import (
+    content_type_is_json,
+    fetch_site_is_safe,
+    host_is_local,
+    origin_is_local,
+)
 from server.responses import (
     json_error,
     json_ok,
@@ -82,146 +89,74 @@ HELP_DOC_PATH = ROOT_DIR / "docs" / "Cookie获取简短教程.md"
 BACKGROUND_PATH = WEB_ROOT / "Background.png"
 
 
+GET_ROUTES: dict[str, str] = {
+    "/api/defaults": "handle_get_config",
+    "/api/presets": "handle_get_presets",
+    "/api/history": "handle_history",
+    "/api/status": "handle_status",
+    "/api/report-preview": "handle_report_preview",
+    "/api/report-asset": "handle_report_asset",
+    "/api/candidate-thumbnail": "handle_candidate_thumbnail",
+    "/api/history/asset": "handle_history_asset",
+    "/api/help-doc": "handle_help_doc",
+}
+
+POST_ROUTES: dict[str, str] = {
+    "/api/preflight": "handle_preflight",
+    "/api/topic-preview": "handle_topic_preview",
+    "/api/check-cookie": "handle_check_cookie",
+    "/api/clear-config": "handle_clear_config",
+    "/api/cancel-job": "handle_cancel_job",
+    "/api/cache-status": "handle_cache_status",
+    "/api/reexport": "handle_reexport",
+    "/api/history/scan": "handle_history_scan",
+    "/api/history/remove": "handle_history_remove",
+    "/api/history/cache-status": "handle_history_cache_status",
+    "/api/history/reexport": "handle_history_reexport",
+    "/api/history/open-dir": "handle_history_open_dir",
+    "/api/history/preview": "handle_history_preview",
+    "/api/presets/save": "handle_presets_save",
+    "/api/presets/delete": "handle_presets_delete",
+    "/api/presets/activate": "handle_presets_activate",
+    "/api/presets/duplicate": "handle_presets_duplicate",
+    "/api/output/summary": "handle_output_summary",
+    "/api/output/cleanup-preview": "handle_output_cleanup_preview",
+    "/api/output/cleanup": "handle_output_cleanup",
+    "/api/start": "handle_start",
+    "/api/config": "handle_save_config",
+    "/api/select": "handle_select",
+    "/api/cancel-selection": "handle_cancel_selection",
+    "/api/cookie/auto": "handle_cookie_auto",
+    "/api/cookie/edge-debug": "handle_cookie_edge_debug",
+    "/api/cookie/clear-cdp-cache": "handle_cookie_clear_cdp_cache",
+    "/api/cookie/extract": "handle_cookie_extract",
+    "/api/open-result-dir": "handle_open_result_dir",
+}
+
+
 class AppRequestHandler(BaseHTTPRequestHandler):
     server_version = "WeiboStatsHTML/3.0"
+    # Every response carries Content-Length, so keep-alive is safe. Without it
+    # BaseHTTPRequestHandler speaks HTTP/1.0 and each poll, thumbnail and static
+    # asset costs a fresh TCP connection and a fresh thread.
+    protocol_version = "HTTP/1.1"
 
     def do_GET(self) -> None:
-        path = urlparse(self.path).path
-        if path == "/api/defaults":
-            self.handle_get_config()
-            return
-        if path == "/api/presets":
-            self.handle_get_presets()
-            return
-        if path == "/api/history":
-            self.handle_history()
-            return
-        if path == "/api/status":
-            self.handle_status()
-            return
-        if path == "/api/report-preview":
-            self.handle_report_preview()
-            return
-        if path == "/api/report-asset":
-            self.handle_report_asset()
-            return
-        if path == "/api/candidate-thumbnail":
-            self.handle_candidate_thumbnail()
-            return
-        if path == "/api/history/asset":
-            self.handle_history_asset()
-            return
-        if path == "/api/help-doc":
-            self.handle_help_doc()
-            return
-        if path == "/Background.png":
-            if BACKGROUND_PATH.exists() and BACKGROUND_PATH.is_file():
-                send_static_file(self, BACKGROUND_PATH)
-            else:
-                json_error(self, "NOT_FOUND", "背景图片不存在", "请确认 web/Background.png 是否存在。", HTTPStatus.NOT_FOUND)
-            return
-        if path == "/favicon.ico":
-            self.send_response(HTTPStatus.NO_CONTENT)
-            self.end_headers()
-            return
-
-        static_path = resolve_static_path(path)
-        if static_path:
-            send_static_file(self, static_path)
-            return
-        json_error(self, "NOT_FOUND", "接口或页面不存在", "请检查访问地址。", HTTPStatus.NOT_FOUND)
+        self._dispatch(GET_ROUTES, self._get_fallback, require_json_body=False)
 
     def do_POST(self) -> None:
+        self._dispatch(POST_ROUTES, self._post_fallback, require_json_body=True)
+
+    def _dispatch(self, routes: dict[str, str], fallback: Any, require_json_body: bool) -> None:
         path = urlparse(self.path).path
+        if not self._request_origin_allowed(require_json_body):
+            return
         try:
-            if path == "/api/preflight":
-                self.handle_preflight()
+            handler_name = routes.get(path)
+            if handler_name:
+                getattr(self, handler_name)()
                 return
-            if path == "/api/topic-preview":
-                self.handle_topic_preview()
-                return
-            if path == "/api/check-cookie":
-                self.handle_check_cookie()
-                return
-            if path == "/api/clear-config":
-                self.handle_clear_config()
-                return
-            if path == "/api/cancel-job":
-                self.handle_cancel_job()
-                return
-            if path == "/api/cache-status":
-                self.handle_cache_status()
-                return
-            if path == "/api/reexport":
-                self.handle_reexport()
-                return
-            if path == "/api/history/scan":
-                self.handle_history_scan()
-                return
-            if path == "/api/history/remove":
-                self.handle_history_remove()
-                return
-            if path == "/api/history/cache-status":
-                self.handle_history_cache_status()
-                return
-            if path == "/api/history/reexport":
-                self.handle_history_reexport()
-                return
-            if path == "/api/history/open-dir":
-                self.handle_history_open_dir()
-                return
-            if path == "/api/history/preview":
-                self.handle_history_preview()
-                return
-            if path == "/api/presets/save":
-                self.handle_presets_save()
-                return
-            if path == "/api/presets/delete":
-                self.handle_presets_delete()
-                return
-            if path == "/api/presets/activate":
-                self.handle_presets_activate()
-                return
-            if path == "/api/presets/duplicate":
-                self.handle_presets_duplicate()
-                return
-            if path == "/api/output/summary":
-                self.handle_output_summary()
-                return
-            if path == "/api/output/cleanup-preview":
-                self.handle_output_cleanup_preview()
-                return
-            if path == "/api/output/cleanup":
-                self.handle_output_cleanup()
-                return
-            if path == "/api/start":
-                self.handle_start()
-                return
-            if path == "/api/config":
-                self.handle_save_config()
-                return
-            if path == "/api/select":
-                self.handle_select()
-                return
-            if path == "/api/cancel-selection":
-                self.handle_cancel_selection()
-                return
-            if path == "/api/cookie/auto":
-                self.handle_cookie_auto()
-                return
-            if path == "/api/cookie/edge-debug":
-                self.handle_cookie_edge_debug()
-                return
-            if path == "/api/cookie/clear-cdp-cache":
-                self.handle_cookie_clear_cdp_cache()
-                return
-            if path == "/api/cookie/extract":
-                self.handle_cookie_extract()
-                return
-            if path == "/api/open-result-dir":
-                self.handle_open_result_dir()
-                return
-            json_error(self, "NOT_FOUND", "接口不存在", "请检查请求地址。", HTTPStatus.NOT_FOUND)
+            fallback(path)
         except CookieFetchError as err:
             console_log(f"Cookie 自动读取失败：{err}")
             json_error(self, "COOKIE_AUTO_FAILED", "Cookie 自动读取失败", str(err), HTTPStatus.BAD_REQUEST)
@@ -233,6 +168,54 @@ class AppRequestHandler(BaseHTTPRequestHandler):
             json_error(self, "BAD_REQUEST", str(err), "请检查输入参数后重试。", HTTPStatus.BAD_REQUEST)
         except Exception as err:
             self.handle_unknown_error(path, err)
+
+    def _request_origin_allowed(self, require_json_body: bool) -> bool:
+        """Reject anything that did not originate from this machine's own page.
+
+        See server/guards for why each header matters. Failures are logged to
+        the console rather than described to the caller.
+        """
+        port = self.server.server_address[1] if self.server else None
+        if not host_is_local(self.headers.get("Host"), port):
+            self._reject_request("HOST_NOT_ALLOWED", "请求的 Host 不是本机地址")
+            return False
+        if not origin_is_local(self.headers.get("Origin"), port):
+            self._reject_request("ORIGIN_NOT_ALLOWED", "请求来源不是本机页面")
+            return False
+        if not fetch_site_is_safe(self.headers.get("Sec-Fetch-Site")):
+            self._reject_request("CROSS_SITE_REJECTED", "已拒绝跨站请求")
+            return False
+        if require_json_body and not content_type_is_json(self.headers.get("Content-Type")):
+            self._reject_request("CONTENT_TYPE_REJECTED", "请求体必须是 application/json")
+            return False
+        return True
+
+    def _reject_request(self, code: str, message: str) -> None:
+        console_log(f"已拒绝一个来源不可信的请求：{message}（{self.command} {self.path}）")
+        # Rejected before reading any body, so the connection cannot be reused.
+        self.close_connection = True
+        json_error(self, code, message, "本工具只接受本机页面发起的请求。", HTTPStatus.FORBIDDEN)
+
+    def _get_fallback(self, path: str) -> None:
+        if path == "/Background.png":
+            if BACKGROUND_PATH.exists() and BACKGROUND_PATH.is_file():
+                send_static_file(self, BACKGROUND_PATH)
+            else:
+                json_error(self, "NOT_FOUND", "背景图片不存在", "请确认 web/Background.png 是否存在。", HTTPStatus.NOT_FOUND)
+            return
+        if path == "/favicon.ico":
+            self.send_response(HTTPStatus.NO_CONTENT)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        static_path = resolve_static_path(path)
+        if static_path:
+            send_static_file(self, static_path)
+            return
+        json_error(self, "NOT_FOUND", "接口或页面不存在", "请检查访问地址。", HTTPStatus.NOT_FOUND)
+
+    def _post_fallback(self, _path: str) -> None:
+        json_error(self, "NOT_FOUND", "接口不存在", "请检查请求地址。", HTTPStatus.NOT_FOUND)
 
     def handle_get_config(self) -> None:
         defaults = app_defaults()
@@ -501,29 +484,18 @@ class AppRequestHandler(BaseHTTPRequestHandler):
     def handle_report_preview(self) -> None:
         parsed = urlparse(self.path)
         qs_md = parse_qs(parsed.query).get("md_path", [])
-        if qs_md and qs_md[0]:
-            path = Path(qs_md[0])
-            report_path = path.resolve() if path.exists() and path.is_file() else None
-        else:
-            report_path = current_report_md_path()
+        report_path = resolve_report_md_path(qs_md[0]) if qs_md and qs_md[0] else current_report_md_path()
         if not report_path:
             json_error(self, "NO_MARKDOWN_REPORT", "当前没有可预览的 Markdown 周报", "请先完成一次导出。", HTTPStatus.NOT_FOUND)
             return
-        try:
-            markdown = report_path.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            markdown = report_path.read_text(encoding="utf-8-sig")
+        markdown = report_path.read_text(encoding="utf-8-sig", errors="replace")
         send_json(self, {"markdown": markdown, "path": _rel_display_path(report_path)})
 
     def handle_report_asset(self) -> None:
         parsed = urlparse(self.path)
         qs = parse_qs(parsed.query)
         qs_md = qs.get("md_path", [])
-        if qs_md and qs_md[0]:
-            md_file = Path(qs_md[0])
-            report_path = md_file.resolve() if md_file.exists() and md_file.is_file() else None
-        else:
-            report_path = current_report_md_path()
+        report_path = resolve_report_md_path(qs_md[0]) if qs_md and qs_md[0] else current_report_md_path()
         if not report_path:
             json_error(self, "NO_MARKDOWN_REPORT", "当前没有可预览的 Markdown 周报", "请先完成一次导出。", HTTPStatus.NOT_FOUND)
             return
@@ -575,7 +547,7 @@ class AppRequestHandler(BaseHTTPRequestHandler):
         payload = parse_json_body(self)
         run_dir_value = (payload.get("run_dir") or "").strip() if payload else ""
         if run_dir_value:
-            result_dir = Path(run_dir_value)
+            result_dir = confine_run_dir(Path(run_dir_value))
             if not result_dir.exists() or not result_dir.is_dir():
                 result_dir = None
         else:
@@ -658,7 +630,16 @@ class AppRequestHandler(BaseHTTPRequestHandler):
         if path == "/api/clear-config":
             json_error(self, "CLEAR_CONFIG_FAILED", "清空配置失败", "请确认配置文件没有被其他程序占用后重试。", HTTPStatus.INTERNAL_SERVER_ERROR)
             return
-        json_error(self, "INTERNAL_ERROR", "任务执行失败", f"{type(err).__name__}: {err}", HTTPStatus.INTERNAL_SERVER_ERROR)
+        # str(err) on Windows routinely embeds C:\Users\<real name>\... . Keep
+        # the detail on the operator's console; the page gets the type only.
+        console_log(f"接口 {path} 执行失败：{type(err).__name__}: {err}")
+        json_error(
+            self,
+            "INTERNAL_ERROR",
+            "任务执行失败",
+            f"发生了未预期的错误（{type(err).__name__}），详情见命令行窗口日志。",
+            HTTPStatus.INTERNAL_SERVER_ERROR,
+        )
 
     def log_message(self, _format: str, *_args: Any) -> None:
         return
@@ -728,7 +709,7 @@ def resolve_topic_preview(
     topic_name = normalize_super_topic_name(super_topic)
     source = "fallback" if topic_name else "id"
     message = "已解析超话 ID，等待识别名称。"
-    cookie = str(payload.get("cookie") or "").strip()
+    cookie = resolve_payload_cookie(payload)
     if cookie:
         try:
             client = client_factory(cookie=cookie, timeout=(3, 8), retry=0, pause_seconds=0)
@@ -776,7 +757,7 @@ def _topic_preview_reference(payload: dict[str, Any]) -> Any:
 
 
 def check_cookie_state(payload: dict[str, Any]) -> dict[str, str]:
-    cookie = str(payload.get("cookie") or "").strip()
+    cookie = resolve_payload_cookie(payload)
     super_topic = str(payload.get("super_topic") or "").strip()
     topic_id = parse_super_topic_id(super_topic) if super_topic else None
     return WeiboClient(cookie=cookie, timeout=10, retry=0).check_cookie(topic_id)
@@ -791,17 +772,58 @@ def parse_optional_int(value: Any, default: int) -> int:
         return default
 
 
+def allowed_run_dir_roots() -> list[Path]:
+    """Directories a run directory is allowed to live in.
+
+    ROOT_DIR itself is deliberately absent: reexport writes fixed file names
+    (weekly_report.md, weibo_posts.xlsx, manifest.json...) into whatever
+    run_dir it is handed, so allowing the whole project tree would make
+    run_dir="web" a legal write target. It only failed before because the
+    cache lookup happened to miss -- accidental safety, not designed safety.
+    """
+    configured_output = normalize_output_dir(load_saved_config().get("output_dir")).resolve()
+    return [(ROOT_DIR / "output").resolve(), configured_output]
+
+
+def confine_run_dir(path: Path) -> Path:
+    resolved = path.expanduser()
+    resolved = (ROOT_DIR / resolved).resolve() if not resolved.is_absolute() else resolved.resolve()
+    if not any(is_relative_to(resolved, root) for root in allowed_run_dir_roots()):
+        raise ValueError("运行目录不在允许的项目或导出目录范围内。")
+    if not RUN_DIR_RE.match(resolved.name):
+        raise ValueError("运行目录名无效，应形如 20260601_184009。")
+    return resolved
+
+
 def resolve_run_dir_from_payload(payload: dict[str, Any]) -> Path:
     raw = str(payload.get("run_dir") or "").strip()
     if not raw:
         raise ValueError("请填写运行目录。")
-    path = Path(raw).expanduser()
-    path = (ROOT_DIR / path).resolve() if not path.is_absolute() else path.resolve()
-    configured_output = normalize_output_dir(load_saved_config().get("output_dir")).resolve()
-    allowed_roots = [ROOT_DIR.resolve(), configured_output]
-    if not any(is_relative_to(path, root) for root in allowed_roots):
-        raise ValueError("运行目录不在允许的项目或导出目录范围内。")
-    return path
+    return confine_run_dir(Path(raw))
+
+
+def resolve_report_md_path(raw: str) -> Path | None:
+    """Confine a caller-supplied md_path to a real run directory.
+
+    Unconstrained, this parameter read any file on disk: the preview endpoint
+    returned it as Markdown, and the asset endpoint used its parent as the base
+    directory for further reads, which defeated that endpoint's own traversal
+    check.
+    """
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    try:
+        candidate = Path(text).expanduser()
+        candidate = (ROOT_DIR / candidate).resolve() if not candidate.is_absolute() else candidate.resolve()
+        confine_run_dir(candidate.parent)
+    except (ValueError, OSError):
+        return None
+    if candidate.suffix.lower() != ".md":
+        return None
+    if not candidate.exists() or not candidate.is_file():
+        return None
+    return candidate
 
 
 def current_report_md_path() -> Path | None:
@@ -846,6 +868,10 @@ def _rel_display_path(path: Path) -> str:
 
 
 def open_local_path(path: Path) -> None:
+    # Explicit invariant: startfile on a file would *execute* it, so the
+    # directory check must not be left implicit in the callers.
+    if not path.is_dir():
+        raise ValueError("只允许打开目录。")
     if os.name == "nt":
         os.startfile(str(path))
         return

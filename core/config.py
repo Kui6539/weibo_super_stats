@@ -262,6 +262,20 @@ def _write_config_backup(backup_path: Path) -> None:
         return
 
 
+def resolve_payload_cookie(payload: dict[str, Any]) -> str:
+    """The cookie to use for this request, falling back to the stored one.
+
+    Since /api/defaults stopped echoing the credential, the front end leaves
+    the field empty to mean "keep using the saved cookie". Every consumer of a
+    request payload has to resolve it through here rather than reading the key
+    directly, or an empty box would read as "no cookie configured".
+    """
+    typed = str(payload.get("cookie") or "").strip()
+    if typed:
+        return typed
+    return str(load_saved_config().get("cookie") or "").strip()
+
+
 def validate_config_payload(payload: dict[str, Any]) -> list[dict[str, str]]:
     checks: list[dict[str, str]] = []
 
@@ -269,7 +283,7 @@ def validate_config_payload(payload: dict[str, Any]) -> list[dict[str, str]]:
         checks.append({"id": check_id, "label": label, "status": status, "message": message})
 
     super_topic = str(payload.get("super_topic") or "").strip()
-    cookie = str(payload.get("cookie") or "").strip()
+    cookie = resolve_payload_cookie(payload)
     if not super_topic:
         add("topic_required", "超话输入", "error", "未填写超话链接或 ID。建议填写完整超话链接或 100808 开头的超话 ID。")
         add("topic_parse", "超话解析", "error", "超话为空，无法解析。请先填写超话链接或 ID。")
@@ -358,7 +372,7 @@ def validate_config_payload(payload: dict[str, Any]) -> list[dict[str, str]]:
 
 def build_crawl_config(payload: dict[str, Any]) -> tuple[CrawlConfig, Path]:
     super_topic = str(payload.get("super_topic") or "").strip()
-    cookie = str(payload.get("cookie") or "").strip()
+    cookie = resolve_payload_cookie(payload)
     if not super_topic:
         raise ValueError("请填写超话链接或ID。")
     if not cookie:
@@ -433,7 +447,20 @@ def app_defaults() -> dict[str, Any]:
         "version": __version__,
         "config_version": CONFIG_VERSION,
     }
-    defaults.update({key: value for key, value in saved.items() if value})
+    # Merge saved values, but keep falsy-yet-meaningful ones: `if value` alone
+    # drops download_images=False, and since the base dict has no such key the
+    # response omits it entirely and the front end silently restores its own
+    # default.
+    for key, value in saved.items():
+        if isinstance(value, (bool, list, dict)) or value:
+            defaults[key] = value
+    # The cookie is a live login token and must not travel back to the page.
+    # /api/presets already strips it; this path used to put it back via the
+    # merge above, which made an unauthenticated GET leak the credential.
+    cookie = str(saved.get("cookie") or "")
+    defaults["cookie"] = ""
+    defaults["has_cookie"] = bool(cookie)
+    defaults["cookie_length"] = len(cookie)
     return defaults
 
 

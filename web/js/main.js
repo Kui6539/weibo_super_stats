@@ -341,6 +341,7 @@ const cookieController = window.WeiboCookie.createController({
   controls,
   ui,
   api,
+  formController,
   setBusy,
   showToast,
   appendClientLog,

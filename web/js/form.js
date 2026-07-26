@@ -1,10 +1,21 @@
 window.WeiboForm = {
   createController({ fields, controls, ui, getTheme }) {
+    // The server never sends the saved cookie back, so an empty textarea means
+    // "keep whatever is stored", not "clear it". Omitting the key entirely lets
+    // the server fall back to the stored value; sending "" would wipe it.
+    let hasStoredCookie = false;
+
+    function withCookie(payload) {
+      const typed = fields.cookie.value.trim();
+      if (typed) return { ...payload, cookie: typed };
+      if (hasStoredCookie) return payload;
+      return { ...payload, cookie: "" };
+    }
+
     function readForm() {
-      return {
+      return withCookie({
         super_topic: fields.superTopic.value.trim(),
         issue: fields.issue.value.trim(),
-        cookie: fields.cookie.value.trim(),
         window_start: fields.windowStart.value,
         window_end: fields.windowEnd.value,
         max_pages: fields.maxPages.value,
@@ -17,14 +28,13 @@ window.WeiboForm = {
         output_dir: fields.outputDir.value.trim(),
         theme: getTheme(),
         advanced_mode: controls.advancedMode.checked,
-      };
+      });
     }
 
     function configPayload() {
-      return {
+      return withCookie({
         super_topic: fields.superTopic.value.trim(),
         issue: fields.issue.value.trim(),
-        cookie: fields.cookie.value.trim(),
         max_pages: fields.maxPages.value,
         topic_comment_factor: fields.topicCommentFactor.value,
         pause_seconds: fields.pauseSeconds.value,
@@ -35,7 +45,14 @@ window.WeiboForm = {
         output_dir: fields.outputDir.value.trim(),
         theme: getTheme(),
         advanced_mode: controls.advancedMode.checked,
-      };
+      });
+    }
+
+    function setStoredCookieState(hasCookie, cookieLength) {
+      hasStoredCookie = Boolean(hasCookie);
+      fields.cookie.placeholder = hasStoredCookie
+        ? `已保存 Cookie（${cookieLength || 0} 个字符），留空表示继续使用；粘贴新的可覆盖`
+        : "粘贴微博 Cookie，或使用上方按钮自动获取";
     }
 
     function setAdvancedMode(enabled) {
@@ -48,7 +65,8 @@ window.WeiboForm = {
     function applyDefaults(defaults) {
       fields.superTopic.value = defaults.super_topic || "";
       fields.issue.value = defaults.issue || "";
-      fields.cookie.value = defaults.cookie || "";
+      fields.cookie.value = "";
+      setStoredCookieState(defaults.has_cookie, defaults.cookie_length);
       fields.windowStart.value = defaults.window_start || "";
       fields.windowEnd.value = defaults.window_end || "";
       fields.maxPages.value = defaults.max_pages || 80;
@@ -67,6 +85,8 @@ window.WeiboForm = {
       configPayload,
       setAdvancedMode,
       applyDefaults,
+      setStoredCookieState,
+      hasStoredCookie: () => hasStoredCookie,
     };
   },
 };

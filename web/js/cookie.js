@@ -4,6 +4,7 @@ window.WeiboCookie = {
     controls,
     ui,
     api,
+    formController,
     setBusy,
     showToast,
     appendClientLog,
@@ -13,6 +14,9 @@ window.WeiboCookie = {
   }) {
     let cookieValidationState = "unverified";
     let selectedBrowser = "edge";
+    // The server no longer echoes the saved cookie, so an empty textarea does
+    // not mean "no cookie". Track what is stored separately from what is typed.
+    let storedCookieLength = 0;
 
     async function launchEdgeDebug() {
       setBusy(controls.edgeDebug, true, "正在打开");
@@ -63,6 +67,7 @@ window.WeiboCookie = {
         updateSummary();
         resetPreflightInline();
         await saveConfigNow();
+        storeAndClearTypedCookie();
         const label = data.browser_label || browserLabel();
         showToast(data.debug_browser_closed ? `Cookie 自动读取成功，调试 ${label} 已延迟 3 秒关闭。` : "Cookie 自动读取成功。");
         await checkCookie({ source: "auto" });
@@ -99,6 +104,7 @@ window.WeiboCookie = {
         updateSummary();
         resetPreflightInline();
         await saveConfigNow();
+        storeAndClearTypedCookie();
         showToast("已从粘贴内容中识别 Cookie。", "info");
       } catch (err) {
         appendClientLog(err.message);
@@ -135,6 +141,7 @@ window.WeiboCookie = {
       setBusy(controls.clearCookie, true, "正在清空");
       try {
         fields.cookie.value = "";
+        setStoredCookieLength(0);
         setValidationState("unverified");
         updateSummary();
         resetPreflightInline();
@@ -197,9 +204,28 @@ window.WeiboCookie = {
       return selectedBrowser === "chrome" ? "Chrome" : "Edge";
     }
 
+    function setStoredCookieLength(length) {
+      storedCookieLength = Number(length) || 0;
+      formController?.setStoredCookieState(storedCookieLength > 0, storedCookieLength);
+    }
+
+    function storeAndClearTypedCookie() {
+      // Once saved, the credential lives on the server only -- keep the page's
+      // copy no longer than it takes to send it.
+      setStoredCookieLength(fields.cookie.value.trim().length);
+      fields.cookie.value = "";
+      updateSummary();
+    }
+
     function updateSummary() {
-      const length = fields.cookie.value.trim().length;
-      ui.cookieSummary.textContent = length ? `已填写 Cookie，长度 ${length} 字符` : "未填写 Cookie";
+      const typedLength = fields.cookie.value.trim().length;
+      if (typedLength) {
+        ui.cookieSummary.textContent = `已填写 Cookie，长度 ${typedLength} 字符（尚未保存）`;
+      } else if (storedCookieLength) {
+        ui.cookieSummary.textContent = `已保存 Cookie，长度 ${storedCookieLength} 字符`;
+      } else {
+        ui.cookieSummary.textContent = "未填写 Cookie";
+      }
       ui.cookieStateBadge.textContent = statusLabel(cookieValidationState);
       ui.cookieStateBadge.className = `mini-badge cookie-state ${cookieValidationState}`;
     }
@@ -246,6 +272,7 @@ window.WeiboCookie = {
       getBrowser,
       setBrowser,
       setValidationState,
+      setStoredCookieLength,
       updateSummary,
     };
   },

@@ -34,6 +34,7 @@ window.WeiboConfig = {
       formController.applyDefaults(defaults);
       themeController.apply(defaults.theme === "light" ? "light" : "dark");
       cookieController.setBrowser(defaults.cookie_browser || "edge", { silent: true });
+      cookieController.setStoredCookieLength(defaults.has_cookie ? defaults.cookie_length : 0);
       cookieController.updateSummary();
       logsController.applyPosition(defaults.log_position);
       configReady = true;
