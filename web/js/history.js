@@ -4,13 +4,16 @@ window.WeiboHistory = {
     let dropdownOpen = false;
     let currentDetailItem = null;
 
+    // Reads the history index instead of re-scanning output. load() runs on
+    // every page open, every finished task and after each delete; scanning
+    // walks every run directory and reads every manifest, so its cost grows
+    // with the number of past runs. Completed tasks write their own index
+    // entry, so the index is already current -- an explicit "扫描 output" is
+    // for picking up directories that arrived some other way.
     async function load() {
       if (!ui.historyList) return;
       try {
-        const response = await api("/api/history/scan", {
-          method: "POST",
-          body: JSON.stringify({ output_dir: "output" }),
-        });
+        const response = await api("/api/history");
         const data = response.data || response;
         items = data.items || data.history?.items || [];
         render();
@@ -192,6 +195,7 @@ window.WeiboHistory = {
       const item = items.find((row) => row.run_id === runId);
       const topicLabel = item?.title_with_issue || item?.report_title || item?.super_topic_name || item?.super_topic_id || runId;
       renderJob({
+        local: true,
         status: "exporting",
         stage: "export",
         stage_label: "重新生成报告",
@@ -207,6 +211,7 @@ window.WeiboHistory = {
         });
         const data = response.data || response;
         renderJob({
+          local: true,
           status: "completed",
           stage: "export",
           stage_label: "重新生成完成",
@@ -220,6 +225,7 @@ window.WeiboHistory = {
         await load();
       } catch (err) {
         renderJob({
+          local: true,
           status: "failed",
           stage: "export",
           stage_label: "重新生成失败",

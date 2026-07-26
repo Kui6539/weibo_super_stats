@@ -7,7 +7,27 @@ window.WeiboLogs = {
 
     let lastLogJobId = "";
     let logClearCursor = 0;
+    let logClearAnchor = "";
     let visibleLogEntries = [];
+
+    function entryKey(entry) {
+      return `${entry?.time || ""}|${entry?.stage || ""}|${entry?.level || ""}|${entry?.message || ""}`;
+    }
+
+    function resolveClearCursor(entries) {
+      if (!logClearAnchor) return Math.min(logClearCursor, entries.length);
+      for (let i = entries.length - 1; i >= 0; i -= 1) {
+        if (entryKey(entries[i]) === logClearAnchor) {
+          logClearCursor = i + 1;
+          return logClearCursor;
+        }
+      }
+      // The anchor has scrolled out of the window; everything still shown is
+      // newer than the clear, so show all of it rather than nothing.
+      logClearAnchor = "";
+      logClearCursor = 0;
+      return 0;
+    }
     let dragState = null;
     let suppressBubbleClick = false;
     let lastRenderedCount = 0;
@@ -30,8 +50,9 @@ window.WeiboLogs = {
       if (jobId && jobId !== lastLogJobId) {
         lastLogJobId = jobId;
         logClearCursor = 0;
+        logClearAnchor = "";
       }
-      const afterClear = entries.slice(logClearCursor);
+      const afterClear = entries.slice(resolveClearCursor(entries));
       const keyword = (controls.logSearch.value || "").trim().toLowerCase();
       const levelFilter = controls.logLevelFilter.value || "all";
       visibleLogEntries = afterClear.filter((item) => {
@@ -516,6 +537,11 @@ window.WeiboLogs = {
     function clearView() {
       const entries = normalizeLogEntries(getCurrentJob ? getCurrentJob() : null);
       logClearCursor = entries.length;
+      // The snapshot is a sliding window of the most recent SNAPSHOT_LIMIT
+      // entries, so a plain index stops meaning anything once the window
+      // moves. Remember the entry we cleared up to and re-derive the index
+      // from it on every render.
+      logClearAnchor = entries.length ? entryKey(entries[entries.length - 1]) : "";
       visibleLogEntries = [];
       ui.backendLogBox.innerHTML = "";
       ui.logCount.textContent = "0 条";

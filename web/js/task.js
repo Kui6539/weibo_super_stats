@@ -20,18 +20,42 @@ window.WeiboTask = {
     let pollTimer = null;
     let pollFailures = 0;
     let currentRenderedJob = null;
+    let lastRenderKey = null;
     let cancelledToastJobId = null;
 
     let lastJobActive = false;
 
-    function renderJob(job) {
+    // Identifies a snapshot's rendered state. Polling returns the same
+    // snapshot most of the time, and re-rendering it rebuilt up to 300 log
+    // rows and 20 candidate cards every second -- destroying the user's text
+    // selection and keyboard focus along the way.
+    function renderKey(job) {
+      if (!job) return "none";
+      return [
+        job.id,
+        job.status,
+        job.stage,
+        job.updated_at,
+        job.events?.length ?? 0,
+        job.logs?.length ?? 0,
+        job.progress?.percent ?? "",
+        job.cancel_requested ? 1 : 0,
+      ].join("|");
+    }
+
+    function renderJob(job, options = {}) {
       const previousJob = currentRenderedJob;
+      const key = renderKey(job);
+      const unchanged = key === lastRenderKey && !options.force;
       currentRenderedJob = job;
-      progressController.updateStatus(job);
-      progressController.render(job);
-      logsController.render(job);
-      candidatesController.render(job);
-      cacheController.renderResult(job);
+      lastRenderKey = key;
+      if (!unchanged) {
+        progressController.updateStatus(job);
+        progressController.render(job);
+        logsController.render(job);
+        candidatesController.render(job);
+        cacheController.renderResult(job);
+      }
       if (job?.status !== "cancelled") {
         cancelledToastJobId = null;
       }
@@ -239,6 +263,10 @@ window.WeiboTask = {
     }
 
     function isActive(job) {
+      // History reexport renders a synthetic job to reuse this panel. It has
+      // no server-side counterpart, so polling on its behalf would fetch
+      // job=null and wipe the progress the user is watching.
+      if (job?.local) return false;
       return ["running", "awaiting_selection", "exporting"].includes(job?.status);
     }
 
