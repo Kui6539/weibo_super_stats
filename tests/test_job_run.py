@@ -38,6 +38,7 @@ from unittest import mock
 
 import core.history
 import core.job
+from core.artifact_cleanup import is_run_dir_deletable
 from core.cache import CacheStore
 from core.crawl_types import CrawlConfig
 from core.job import CrawlJob, JobManager
@@ -490,7 +491,7 @@ class JobRunTests(unittest.TestCase):
             can_reexport, missing = env.cache_store(run_dir).has_required_for_reexport()
             self.assertTrue(can_reexport, missing)
             self.assertEqual([item["status"] for item in env.history_items()], ["export_failed"])
-            self.assertFalse(core.job._is_cancel_run_dir_deletable(run_dir, env.output_dir))
+            self.assertFalse(is_run_dir_deletable(run_dir, env.output_dir))
 
 
 class JobManagerTests(unittest.TestCase):

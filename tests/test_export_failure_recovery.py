@@ -60,7 +60,7 @@ class ExportFailureRecoveryTests(unittest.TestCase):
 
     def test_export_failed_manifest_is_not_treated_as_garbage(self) -> None:
         """A partially exported run must survive a later cleanup pass."""
-        from core.job import _is_cancel_run_dir_deletable
+        from core.artifact_cleanup import is_run_dir_deletable as _is_cancel_run_dir_deletable
 
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)

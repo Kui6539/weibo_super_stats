@@ -1,14 +1,22 @@
 from __future__ import annotations
 
 import re
-import shutil
 import threading
 import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from core.artifact_cleanup import (
+    cleanup_cancelled_artifacts,
+    cleanup_incomplete_artifacts,
+)
 from core.cache import CacheStore, sanitize_for_cache
+from core.candidates import (
+    count_downloaded_images,
+    count_expected_images,
+    serialize_candidate,
+)
 from core.crawl_types import CrawlConfig, CrawlError
 from core.errors import JobCancelled
 from core.events import (
@@ -24,7 +32,7 @@ from core.events import (
     stage_label,
 )
 from core.history import add_history_item_from_manifest
-from core.paths import is_relative_to, make_run_dir
+from core.paths import make_run_dir
 from core.recovery import recovery_suggestions_for_status
 from crawler import (
     WeiboSuperTopicCrawler,
@@ -46,9 +54,27 @@ from export.weibo_body_exporter import export_weibo_body
 from modules.comments.ranking import build_comment_leaderboards
 from modules.images.candidate_thumbnails import build_candidate_thumbnails
 from modules.images.manifest import build_images_manifest
-from modules.post_normalizer import split_multi_value as _normalizer_split_multi_value
-from modules.text_cleaning import remove_weibo_private_chars
 from modules.topic import build_report_title, format_report_title_with_issue
+
+# Artifact cleanup now lives in core.artifact_cleanup and candidate
+# serialization in core.candidates; both stay importable from here because
+# handlers, tests and older call sites reach for them by this name.
+__all__ = [
+    "ACTIVE_STATUSES",
+    "CrawlJob",
+    "JobManager",
+    "cancel_current_job",
+    "cleanup_cancelled_artifacts",
+    "cleanup_incomplete_artifacts",
+    "console_log",
+    "count_downloaded_images",
+    "count_expected_images",
+    "create_job",
+    "get_current_job",
+    "serialize_candidate",
+    "serialize_job",
+    "shutdown_current_job",
+]
 
 ACTIVE_STATUSES = {"running", "awaiting_selection", "exporting"}
 RUN_DIR_RE = re.compile(r"^\d{8}_\d{6}$")
@@ -63,14 +89,6 @@ def console_log(message: str, timestamp: str | None = None) -> None:
         print(f"[{stamp}] {message}", flush=True)
 
 
-def compact_content(value: Any, max_chars: int = 420) -> str:
-    content = remove_weibo_private_chars(str(value or ""))
-    content = re.sub(r"\s+", " ", content).strip()
-    if len(content) > max_chars:
-        return content[:max_chars] + "..."
-    return content
-
-
 def visible_job_result(result: dict[str, Any] | None) -> dict[str, Any] | None:
     if not isinstance(result, dict):
         return None
@@ -78,80 +96,6 @@ def visible_job_result(result: dict[str, Any] | None) -> dict[str, Any] | None:
     if run_dir and not Path(run_dir).exists():
         return None
     return dict(result)
-
-
-def to_int(value: Any) -> int:
-    try:
-        return int(value or 0)
-    except (TypeError, ValueError):
-        return 0
-
-
-def to_float(value: Any) -> float:
-    try:
-        return float(value or 0)
-    except (TypeError, ValueError):
-        return 0.0
-
-
-# Shared with the export and image layers; see modules.post_normalizer.
-split_multi_value = _normalizer_split_multi_value
-
-
-def serialize_candidate(post: dict, index: int) -> dict[str, Any]:
-    content = remove_weibo_private_chars(str(post.get("content", "") or "")).strip()
-    image_count = to_int(post.get("image_count"))
-    if image_count <= 0:
-        image_count = len(split_multi_value(post.get("original_image_urls")))
-    thumbnail_urls = post.get("candidate_thumbnail_urls")
-    if isinstance(thumbnail_urls, list):
-        preview_paths = [str(path) for path in thumbnail_urls if str(path or "").strip()][:3]
-    else:
-        preview_paths = split_multi_value(post.get("candidate_thumbnail_paths"))[:3]
-    if not preview_paths:
-        preview_paths = [
-            path
-            for path in split_multi_value(post.get("image_local_paths"))
-            if Path(path).exists() and Path(path).is_file()
-        ][:3]
-    return {
-        "index": index,
-        "rank": index + 1,
-        "user_name": str(post.get("user_name", "未知作者") or "未知作者"),
-        "publish_time": str(post.get("publish_time", "") or ""),
-        "content": compact_content(content),
-        "content_excerpt": compact_content(content, max_chars=160),
-        "content_full": content,
-        "score": round(to_float(post.get("score")), 2),
-        "score_detail": dict(post.get("score_detail") or {}),
-        "likes": to_int(post.get("likes")),
-        "comments": to_int(post.get("comments")),
-        "reposts": to_int(post.get("reposts")),
-        "post_url": str(post.get("post_url", "") or ""),
-        "image_count": image_count,
-        "image_preview_paths": preview_paths,
-    }
-
-
-def count_expected_images(posts: list[dict]) -> int:
-    total = 0
-    for post in posts:
-        total += len(split_multi_value(post.get("original_image_urls")))
-        for comment in list(post.get("top_comments_data") or []):
-            total += len(split_multi_value(comment.get("image_urls")))
-    return total
-
-
-def count_downloaded_images(posts: list[dict]) -> int:
-    total = 0
-    for post in posts:
-        paths = split_multi_value(post.get("image_local_paths_all"))
-        if not paths:
-            paths = split_multi_value(post.get("image_local_paths")) + split_multi_value(
-                post.get("comment_image_local_paths")
-            )
-        total += sum(1 for path in paths if Path(path).exists())
-    return total
 
 
 class CrawlJob:
@@ -1096,129 +1040,6 @@ class CrawlJob:
             self.add_log(f"{action}跳过：{'; '.join(skipped)}", level="warning", stage=stage)
         if errors:
             self.add_log(f"{action}失败：{'; '.join(errors)}", level="warning", stage=stage)
-
-
-def cleanup_incomplete_artifacts(
-    run_dir: Path | None,
-    output_dir: Path,
-    cache_store: CacheStore | None = None,
-    keep_cache: bool = False,
-) -> dict[str, Any]:
-    """Remove the artifacts of a run that did not finish.
-
-    ``keep_cache`` is set once the run has produced a cache that reexport can
-    work from. Deleting it then would force a full re-crawl over what is
-    usually a locked output file, and it is exactly the situation the offline
-    reexport path exists for -- so the run directory is kept too, otherwise the
-    history panel has no entry to offer the user.
-    """
-    result: dict[str, Any] = {
-        "run_dir": str(run_dir) if run_dir else "",
-        "deleted_dirs": [],
-        "skipped": [],
-        "errors": [],
-        "kept_cache": bool(keep_cache),
-    }
-    if run_dir is None:
-        result["skipped"].append("尚未创建运行目录")
-        return result
-
-    resolved_run_dir = run_dir.resolve()
-    resolved_output_dir = output_dir.resolve()
-    result["run_dir"] = str(resolved_run_dir)
-    if keep_cache:
-        result["skipped"].append(f"已保留可重新生成报告的缓存与目录：{resolved_run_dir}")
-        return result
-    if not _is_cancel_run_dir_deletable(resolved_run_dir, resolved_output_dir):
-        result["skipped"].append(f"运行目录不符合自动清理规则：{resolved_run_dir}")
-        return result
-
-    cache_dirs = _cancel_cache_dirs(resolved_run_dir, cache_store)
-    for cache_dir in cache_dirs:
-        if not cache_dir.exists():
-            continue
-        if is_relative_to(cache_dir, resolved_run_dir):
-            continue
-        if not _is_cancel_cache_dir_deletable(cache_dir, resolved_run_dir, cache_store):
-            result["skipped"].append(f"缓存目录不符合自动清理规则：{cache_dir}")
-            continue
-        _delete_dir(cache_dir, result)
-
-    _delete_dir(resolved_run_dir, result)
-    return result
-
-
-def cleanup_cancelled_artifacts(
-    run_dir: Path | None,
-    output_dir: Path,
-    cache_store: CacheStore | None = None,
-) -> dict[str, Any]:
-    return cleanup_incomplete_artifacts(run_dir, output_dir, cache_store)
-
-
-def _is_cancel_run_dir_deletable(run_dir: Path, output_dir: Path) -> bool:
-    if not RUN_DIR_RE.match(run_dir.name):
-        return False
-    try:
-        if run_dir.parent.resolve() != output_dir.resolve():
-            return False
-    except OSError:
-        return False
-    manifest_path = run_dir / "manifest.json"
-    if manifest_path.exists():
-        try:
-            import json
-
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        except Exception:
-            manifest = {}
-        status = str((manifest or {}).get("status") or "").strip().lower() if isinstance(manifest, dict) else ""
-        # export_failed still carries a usable crawl plus whatever formats did
-        # get written; it is a reexport candidate, not garbage.
-        if status in {"completed", "reexported", "export_failed", "partial"}:
-            return False
-    return True
-
-
-def _cancel_cache_dirs(run_dir: Path, cache_store: CacheStore | None) -> list[Path]:
-    rows: list[Path] = []
-    if cache_store:
-        rows.extend([cache_store.cache_dir, cache_store.project_cache_dir, cache_store.legacy_cache_dir])
-    else:
-        store = CacheStore(run_dir)
-        rows.extend([store.cache_dir, store.project_cache_dir, store.legacy_cache_dir])
-    out: list[Path] = []
-    seen: set[str] = set()
-    for path in rows:
-        resolved = path.resolve()
-        key = str(resolved).casefold()
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append(resolved)
-    return out
-
-
-def _is_cancel_cache_dir_deletable(cache_dir: Path, run_dir: Path, cache_store: CacheStore | None) -> bool:
-    if cache_dir.name != run_dir.name and cache_dir.name != "cache":
-        return False
-    if cache_dir.name == "cache":
-        return is_relative_to(cache_dir, run_dir)
-    cache_root = (cache_store.cache_root if cache_store else CacheStore(run_dir).cache_root).resolve()
-    return cache_dir.parent.resolve() == cache_root
-
-
-def _delete_dir(path: Path, result: dict[str, Any]) -> None:
-    if not path.exists():
-        return
-    if not path.is_dir():
-        result["skipped"].append(f"不是目录：{path}")
-        return
-    try:
-        shutil.rmtree(path, ignore_errors=False)
-        result["deleted_dirs"].append(str(path))
-    except OSError as err:
-        result["errors"].append(f"{path}: {type(err).__name__}: {err}")
 
 
 class JobManager:
