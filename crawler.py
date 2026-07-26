@@ -35,6 +35,7 @@ from export.excel_exporter import export_posts_xlsx as _export_posts_xlsx
 from export.markdown_exporter import export_weekly_report_md as _export_weekly_report_md
 from export.report_helpers import clean_report_text as _report_clean_report_text
 from export.report_helpers import format_hot_comment_text as _report_format_hot_comment_text
+from export.report_helpers import format_leaderboard_line as _report_format_leaderboard_line
 from export.report_helpers import format_posts_date_range as _report_format_posts_date_range
 from export.report_helpers import iter_report_comments as _report_iter_report_comments
 from export.report_helpers import replace_unicode_emoji as _report_replace_unicode_emoji
@@ -1346,29 +1347,9 @@ def build_comment_leaderboards(posts: Iterable[dict], top_n: int = 3) -> dict:
     return _comments_build_comment_leaderboards(posts, top_n=top_n)
 
 
-def _format_leaderboard_line(
-    item: dict,
-    include_hot: bool = True,
-    include_quality: bool = False,
-    include_like_total: bool = True,
-    include_post_span: bool = False,
-) -> str:
-    rank = int(item.get("rank", 0) or 0)
-    user_name = _clean_text(str(item.get("user_name", "") or "匿名用户"))
-    comment_count = int(item.get("comment_count", 0) or 0)
-    commented_post_count = int(item.get("commented_post_count", 0) or 0)
-    like_total = int(item.get("comment_likes_total", 0) or 0)
-    hot_count = int(item.get("hot_top3_count", 0) or 0)
-    line = f"{rank}. @{user_name}：评论 {comment_count} 条"
-    if include_post_span:
-        line += f"，评论过 {commented_post_count} 条帖子"
-    elif include_like_total:
-        line += f"，本周评论获赞 {like_total}"
-    if include_hot:
-        line += f"，热评前三 {hot_count} 次"
-    if include_quality:
-        line += f"，质量分 {float(item.get('quality_score', 0.0)):.4f}"
-    return line
+# Kept as a forwarding shim: the real implementation lives in report_helpers so
+# the initial export and reexport cannot drift apart again.
+_format_leaderboard_line = _report_format_leaderboard_line
 
 
 def export_weekly_report_docx(

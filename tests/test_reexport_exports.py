@@ -39,3 +39,40 @@ class ReexportExportsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LeaderboardFormattingParityTests(unittest.TestCase):
+    """Reexport must format leaderboards exactly like the initial export.
+
+    They used separate formatters, so regenerating a report silently dropped
+    the rank, the @ prefix, the like totals and the hot-comment counts.
+    """
+
+    def test_summary_exporter_defaults_to_the_shared_formatter(self) -> None:
+        from export.report_helpers import format_leaderboard_line
+        from export.summary_exporter import _append_leaderboards
+
+        rows = {
+            "comment_count_top3": [
+                {"rank": 1, "user_name": "甲", "comment_count": 2, "commented_post_count": 1},
+            ],
+            "comment_quality_top3": [
+                {"rank": 1, "user_name": "甲", "comment_count": 2, "comment_likes_total": 5, "hot_top3_count": 2},
+            ],
+        }
+        default_lines: list[str] = []
+        explicit_lines: list[str] = []
+        _append_leaderboards(default_lines, rows, None)
+        _append_leaderboards(explicit_lines, rows, format_leaderboard_line)
+
+        self.assertEqual(default_lines, explicit_lines)
+        joined = "\n".join(default_lines)
+        self.assertIn("1. @甲", joined)
+        self.assertIn("本周评论获赞 5", joined)
+        self.assertIn("热评前三 2 次", joined)
+
+    def test_the_crawler_shim_points_at_the_shared_implementation(self) -> None:
+        import crawler
+        from export.report_helpers import format_leaderboard_line
+
+        self.assertIs(crawler._format_leaderboard_line, format_leaderboard_line)

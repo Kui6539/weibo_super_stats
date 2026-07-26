@@ -6,6 +6,7 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
+from export.report_helpers import format_leaderboard_line
 from modules.time_utils import normalize_date, parse_weibo_time
 
 
@@ -214,7 +215,7 @@ def _append_leaderboards(
 ) -> None:
     if leaderboards is None:
         return
-    formatter = format_line or _fallback_leaderboard_line
+    formatter = format_line or format_leaderboard_line
     lines.extend(["", "评论数量榜 Top3:"])
     count_rows = list(leaderboards.get("comment_count_top3") or [])
     lines.extend(
@@ -232,9 +233,6 @@ def _append_leaderboards(
     )
 
 
-def _fallback_leaderboard_line(item: dict[str, Any], **_: Any) -> str:
-    user = str(item.get("user_name") or "匿名用户")
-    return f"{user}，评论 {int(item.get('comment_count', 0) or 0)} 条"
 
 
 def _kl(a: list[float], b: list[float]) -> float:

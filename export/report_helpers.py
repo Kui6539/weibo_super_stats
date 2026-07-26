@@ -183,6 +183,38 @@ def replace_weibo_emoticons(text: str) -> str:
     return re.sub(r"\[([^\[\]]{1,24})\]", repl, text)
 
 
+def format_leaderboard_line(
+    item: dict[str, Any],
+    include_hot: bool = True,
+    include_quality: bool = False,
+    include_like_total: bool = True,
+    include_post_span: bool = False,
+) -> str:
+    """Render one leaderboard row.
+
+    Single source of truth for both the initial export and reexport. They used
+    different formatters, so regenerating a report silently downgraded the
+    leaderboards -- losing the rank, the @ prefix, the like totals and the
+    hot-comment counts.
+    """
+    rank = int(item.get("rank", 0) or 0)
+    user_name = clean_report_text(str(item.get("user_name", "") or "匿名用户"))
+    comment_count = int(item.get("comment_count", 0) or 0)
+    commented_post_count = int(item.get("commented_post_count", 0) or 0)
+    like_total = int(item.get("comment_likes_total", 0) or 0)
+    hot_count = int(item.get("hot_top3_count", 0) or 0)
+    line = f"{rank}. @{user_name}：评论 {comment_count} 条"
+    if include_post_span:
+        line += f"，评论过 {commented_post_count} 条帖子"
+    elif include_like_total:
+        line += f"，本周评论获赞 {like_total}"
+    if include_hot:
+        line += f"，热评前三 {hot_count} 次"
+    if include_quality:
+        line += f"，质量分 {float(item.get('quality_score', 0.0)):.4f}"
+    return line
+
+
 def replace_unicode_emoji(text: str) -> str:
     emoji_map = {
         "😄": "(*^▽^*)",
