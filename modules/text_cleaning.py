@@ -4,7 +4,6 @@ import re
 
 from bs4 import BeautifulSoup
 
-
 DEFAULT_TOPIC_TAGS = ("warma", "怒九笑")
 
 

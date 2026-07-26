@@ -6,7 +6,6 @@ from typing import Any
 
 from modules.text_cleaning import remove_weibo_private_chars
 
-
 DEFAULT_POST_FIELDS: dict[str, Any] = {
     "post_id": "",
     "user_name": "",

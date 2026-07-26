@@ -32,8 +32,8 @@ from core.config import (
     load_saved_config,
     parse_datetime_local,
     resolve_payload_cookie,
-    save_user_config,
     save_preset,
+    save_user_config,
     validate_config_payload,
 )
 from core.errors import WeiboStatsError, to_error_response
@@ -41,7 +41,6 @@ from core.history import (
     add_history_item_from_manifest,
     find_history_duplicate,
     find_history_item,
-    get_history_items,
     load_history,
     remove_history_item,
     resolve_history_report_dir,

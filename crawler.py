@@ -1,10 +1,10 @@
-﻿from __future__ import annotations
-
-"""Crawler compatibility layer.
+﻿"""Crawler compatibility layer.
 
 已迁移：评分/过滤、评论榜单、Markdown/CSV/summary、DOCX、XLSX 等低风险导出入口。
 暂留：超话抓取调度、HTML 解析、长正文补全、评论请求调度、图片下载调度和部分历史辅助函数。
 """
+
+from __future__ import annotations
 
 import hashlib
 import heapq
@@ -23,9 +23,9 @@ from typing import Any
 
 import requests
 from bs4 import BeautifulSoup, Tag
+
 from core.crawl_types import CrawlConfig, CrawlError
 from core.errors import CookieInvalidError, RateLimitedError, VisitorSystemError
-from modules.crawler_client import looks_like_weibo_visitor
 from export.csv_exporter import DEFAULT_EXPORT_COLUMN_MAP
 from export.csv_exporter import build_export_row as _export_build_row
 from export.csv_exporter import export_posts_csv as _export_posts_csv
@@ -48,6 +48,7 @@ from export.summary_exporter import build_summary as _export_build_summary
 from export.summary_exporter import calc_date_distribution_fit as _export_calc_date_distribution_fit
 from export.summary_exporter import write_summary_txt as _export_write_summary_txt
 from modules.comments.ranking import build_comment_leaderboards as _comments_build_comment_leaderboards
+from modules.crawler_client import looks_like_weibo_visitor
 from modules.crawler_filters import should_exclude_post
 from modules.crawler_scoring import PreparedScoreConfig, calculate_score_values, prepare_score_config
 from modules.images.url_extract import collect_comment_image_urls as _image_collect_comment_image_urls
@@ -80,7 +81,8 @@ from modules.weibo_html_parser import is_inside_forwarded_content as _html_is_in
 from modules.weibo_html_parser import parse_count as _html_parse_count
 from modules.weibo_html_parser import parse_fm_view_objects as _html_parse_fm_view_objects
 from modules.weibo_html_parser import parse_posts_from_html as _html_parse_posts_from_html
-from modules.weibo_url import parse_super_topic_id as _parse_super_topic_id, to_absolute_url
+from modules.weibo_url import parse_super_topic_id as _parse_super_topic_id
+from modules.weibo_url import to_absolute_url
 
 COMMENTS_API_URL = "https://weibo.com/ajax/statuses/buildComments"
 COMMENT_ANALYSIS_MIN_ROWS = 60

@@ -10,7 +10,6 @@ from openpyxl import load_workbook
 from export.context import ExportContext
 from export.excel_exporter import export_excel
 
-
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
 
 

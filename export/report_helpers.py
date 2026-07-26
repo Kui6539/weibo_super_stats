@@ -7,7 +7,12 @@ from pathlib import Path
 from typing import Any
 
 from modules.crawler_filters import should_exclude_post
-from modules.text_cleaning import clean_topic_tags, collapse_blank_lines, normalize_weibo_text, remove_weibo_private_chars
+from modules.text_cleaning import (
+    clean_topic_tags,
+    collapse_blank_lines,
+    normalize_weibo_text,
+    remove_weibo_private_chars,
+)
 from modules.time_utils import parse_weibo_time
 
 

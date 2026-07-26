@@ -27,7 +27,6 @@ from export.report_helpers import (
     select_weekly_posts,
 )
 
-
 DEFAULT_REPORT_TITLE = "微博超话周报"
 
 

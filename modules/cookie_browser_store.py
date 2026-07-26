@@ -3,6 +3,7 @@ from __future__ import annotations
 
 def read_cookie_from_edge_store() -> str:
     import browser_cookie3 as bc3
+
     from cookie_helper import _try_loader
 
     cookie, _err = _try_loader(bc3.edge, domain_name="weibo.com")
@@ -11,6 +12,7 @@ def read_cookie_from_edge_store() -> str:
 
 def read_cookie_from_chrome_store() -> str:
     import browser_cookie3 as bc3
+
     from cookie_helper import _try_loader
 
     cookie, _err = _try_loader(bc3.chrome, domain_name="weibo.com")

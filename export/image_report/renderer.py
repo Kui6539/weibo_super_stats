@@ -5,7 +5,14 @@ import os
 import re
 from pathlib import Path
 
-from export.image_report.models import CommentBlock, ImageAsset, ImageReportConfig, ImageReportData, PageBlock, PostBlock
+from export.image_report.models import (
+    CommentBlock,
+    ImageAsset,
+    ImageReportConfig,
+    ImageReportData,
+    PageBlock,
+    PostBlock,
+)
 
 
 def render_preview_html(

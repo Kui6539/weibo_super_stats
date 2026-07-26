@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
-import os
 from pathlib import Path
 
 from core.cache import CACHE_ROOT_ENV, CacheError, CacheStore, sanitize_for_cache

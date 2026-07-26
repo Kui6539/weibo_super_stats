@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import unittest
 
-from modules.comments.parser import extract_author_replies, extract_comment_items, extract_hot_comments, parse_comment_response
+from modules.comments.parser import (
+    extract_author_replies,
+    extract_comment_items,
+    extract_hot_comments,
+    parse_comment_response,
+)
 
 
 class CommentsParserTests(unittest.TestCase):

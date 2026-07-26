@@ -119,7 +119,7 @@ class CommentFailureReportingTests(unittest.TestCase):
     def test_a_few_failures_stay_quiet(self) -> None:
         logs: list[str] = []
         crawler = WeiboSuperTopicCrawler(cookie="SUB=x", progress_callback=logs.append)
-        for index in range(20):
+        for _ in range(20):
             crawler._note_comment_attempt()
         crawler._record_comment_failure("post1", error=ValueError("bad json"))
 

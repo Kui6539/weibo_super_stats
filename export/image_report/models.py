@@ -22,7 +22,7 @@ class ImageReportConfig:
     browser_channel: str = "msedge"
 
     @classmethod
-    def from_mapping(cls, value: dict[str, Any] | None = None) -> "ImageReportConfig":
+    def from_mapping(cls, value: dict[str, Any] | None = None) -> ImageReportConfig:
         raw = value if isinstance(value, dict) else {}
         cfg = cls()
         for key in (

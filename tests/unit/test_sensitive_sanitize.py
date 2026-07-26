@@ -4,10 +4,10 @@ import json
 import unittest
 
 from core.cache import CacheStore, sanitize_for_cache
+from export.context import ExportContext
 from export.manifest import build_manifest
 from modules.cookie_parser import mask_cookie_for_log
 from tests.helpers import assert_no_sensitive_fields, make_temp_run_dir
-from export.context import ExportContext
 
 
 class SensitiveSanitizeTests(unittest.TestCase):

@@ -1,0 +1,45 @@
+[project]
+name = "weibo-super-stats"
+description = "微博超话周报统计本地工具"
+requires-python = ">=3.10"
+dynamic = ["version"]
+
+[tool.setuptools.dynamic]
+version = { attr = "core.version.__version__" }
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+exclude = [
+    ".venv",
+    "output",
+    "cache",
+    "dist",
+    "debug",
+    "frontend",
+    "assets",
+    ".edge_cdp_profile",
+    ".chrome_cdp_profile",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = [
+    "E501",   # line length is enforced by the formatter, not the linter
+    "B008",   # function call in default argument: not a pattern this code uses
+]
+
+[tool.ruff.lint.per-file-ignores]
+# The compatibility layer re-exports a lot of names that nothing in the file uses.
+"crawler.py" = ["F401"]
+"cookie_helper.py" = ["F401"]
+"modules/images/__init__.py" = ["F401"]
+
+[tool.mypy]
+python_version = "3.10"
+# Start with the layers that already carry annotations; modules/ and
+# crawler.py are opted in later, file by file.
+files = ["core", "server"]
+check_untyped_defs = true
+ignore_missing_imports = true
+warn_unused_ignores = true

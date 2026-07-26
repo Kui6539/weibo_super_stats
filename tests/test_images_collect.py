@@ -6,7 +6,6 @@ from pathlib import Path
 
 from modules.images.collect import collect_all_images, collect_comment_images, collect_post_images
 
-
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
 
 

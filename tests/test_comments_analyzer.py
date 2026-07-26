@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import unittest
 
-from modules.comments.analyzer import analyze_post_comments, build_comment_summary, count_author_replies, count_non_author_comments
+from modules.comments.analyzer import (
+    analyze_post_comments,
+    build_comment_summary,
+    count_author_replies,
+    count_non_author_comments,
+)
 
 
 class CommentsAnalyzerTests(unittest.TestCase):

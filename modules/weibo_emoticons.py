@@ -11,7 +11,6 @@ from urllib.parse import urlparse
 
 import requests
 
-
 WEIBO_EMOTICON_INDEX_URL = "https://h5.sinaimg.cn/m/emoticon/all.json"
 WEIBO_EMOTICON_API_URL = "https://api.weibo.com/2/emotions.json?source=3818214747&type=face&language=cnname"
 WEIBO_EMOTICON_ASSET_DIR_ENV = "WEIBO_STATS_EMOTICON_DIR"

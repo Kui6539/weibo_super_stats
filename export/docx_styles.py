@@ -8,7 +8,6 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
 
-
 FONT_NAME = "Microsoft YaHei"
 
 
@@ -30,7 +29,7 @@ def add_heading(document, text: str, level: int = 1):
     paragraph.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER if level == 1 else WD_PARAGRAPH_ALIGNMENT.LEFT
     paragraph.paragraph_format.space_before = Pt(8 if level == 1 else 10)
     paragraph.paragraph_format.space_after = Pt(8 if level == 1 else 6)
-    run = add_run_text(
+    add_run_text(
         paragraph,
         str(text),
         size=26 if level == 1 else 14 if level == 2 else 11,

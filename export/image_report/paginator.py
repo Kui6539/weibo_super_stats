@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from functools import lru_cache
+from functools import cache
 
 from export.image_report.models import ImageReportConfig, PageBlock, PostBlock
 
@@ -76,7 +76,7 @@ def _best_partition_for_count(
 ) -> list[PageBlock] | None:
     n = len(posts)
 
-    @lru_cache(maxsize=None)
+    @cache
     def solve(start: int, pages_left: int) -> tuple[float, tuple[int, ...]] | None:
         remaining = n - start
         if pages_left == 0:

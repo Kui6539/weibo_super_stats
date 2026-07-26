@@ -58,11 +58,16 @@ python app.py --host 127.0.0.1 --port 8765
 pip install -r requirements.txt
 ```
 
-长图导出依赖 Playwright 调用本机浏览器截图。首次安装依赖后，如本机没有可用的 Chromium/Edge 组件，可执行：
+长图 JPG 导出依赖 Playwright 调用本机浏览器截图，它体积较大（约 190 MB，含浏览器组件），因此是可选依赖：
 
 ```powershell
+pip install -r requirements-image.txt
 python -m playwright install chromium
 ```
+
+不安装也能正常使用：长图会照常生成 `image_report/preview.html`，只是没有可直接发布的 JPG，任务日志中会给出提示。
+
+工具只应运行在本机回环地址。如果确实需要绑定到局域网地址，必须显式加上 `--allow-remote`——请注意本工具没有任何鉴权，同网段任何人都能读取你保存的微博 Cookie 与本机文件。
 
 ## Cookie 获取
 

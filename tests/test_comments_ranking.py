@@ -4,8 +4,11 @@ import json
 import unittest
 from pathlib import Path
 
-from modules.comments.ranking import build_comment_count_ranking, build_comment_leaderboards, build_comment_quality_ranking
-
+from modules.comments.ranking import (
+    build_comment_count_ranking,
+    build_comment_leaderboards,
+    build_comment_quality_ranking,
+)
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
 

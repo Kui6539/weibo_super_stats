@@ -4,9 +4,10 @@ import json
 import os
 import tempfile
 import unittest
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from core.cache import CACHE_ROOT_ENV, CacheStore
 from export.context import ExportContext

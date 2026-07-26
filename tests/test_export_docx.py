@@ -13,7 +13,6 @@ except ImportError:  # pragma: no cover
 from export.context import ExportContext
 from export.docx_exporter import export_docx
 
-
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
 
 

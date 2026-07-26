@@ -1,0 +1,6 @@
+# 长图 JPG 导出的可选依赖。
+# 安装后还需要执行一次：python -m playwright install chromium
+#
+# 未安装时 export/image_report/exporter.py 会优雅降级：仍写出 preview.html，
+# 并在 warnings 中说明缺少浏览器组件。
+playwright>=1.44.0

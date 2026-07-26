@@ -3,7 +3,21 @@ setlocal
 chcp 65001 >nul
 cd /d "%~dp0.."
 
-set "VERSION=0.11.1"
+rem Read the version from core/version.py so the zip name can never drift from
+rem the code it contains.
+set "PYTHON_EXE="
+where py >nul 2>nul && set "PYTHON_EXE=py -3"
+if not defined PYTHON_EXE where python >nul 2>nul && set "PYTHON_EXE=python"
+if not defined PYTHON_EXE (
+  echo [make_release_zip] Python not found; cannot read version from core/version.py.
+  exit /b 1
+)
+for /f "usebackq delims=" %%V in (`%PYTHON_EXE% -c "from core.version import __version__; print(__version__)"`) do set "VERSION=%%V"
+if not defined VERSION (
+  echo [make_release_zip] Failed to read version from core/version.py.
+  exit /b 1
+)
+echo [make_release_zip] Version from core/version.py: %VERSION%
 set "ZIP_NAME=weibo_super_stats_v%VERSION%.zip"
 set "DIST_DIR=%CD%\dist"
 set "STAGE=%TEMP%\weibo_super_stats_release_%RANDOM%_%RANDOM%"
@@ -14,7 +28,7 @@ mkdir "%STAGE%"
 
 echo [make_release_zip] Preparing release staging directory...
 set "WEIBO_STAGE=%STAGE%"
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$stage=$env:WEIBO_STAGE; @('app.py','crawler.py','cookie_helper.py','README.md','requirements.txt') | ForEach-Object { if (Test-Path -LiteralPath $_) { Copy-Item -LiteralPath $_ -Destination $stage -Force } }; Get-ChildItem -LiteralPath . -Filter '*.bat' -File | ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $stage -Force }"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$stage=$env:WEIBO_STAGE; @('app.py','crawler.py','cookie_helper.py','README.md','requirements.txt','requirements-image.txt') | ForEach-Object { if (Test-Path -LiteralPath $_) { Copy-Item -LiteralPath $_ -Destination $stage -Force } }; Get-ChildItem -LiteralPath . -Filter '*.bat' -File | ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $stage -Force }"
 if errorlevel 1 (
   echo [make_release_zip] Failed to copy root files.
   rmdir /s /q "%STAGE%"

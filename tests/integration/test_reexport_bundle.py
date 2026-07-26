@@ -4,7 +4,6 @@ import json
 import unittest
 from unittest.mock import patch
 
-from core.cache import CacheStore
 from core.errors import ReexportCacheMissingError
 from export.reexport import reexport_from_cache
 from tests.helpers import assert_file_exists, assert_no_sensitive_fields, make_temp_run_dir, write_cache_fixture

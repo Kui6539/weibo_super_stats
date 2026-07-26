@@ -6,7 +6,12 @@ from typing import Any
 
 from export.context import ExportContext
 from export.image_report.models import CommentBlock, ImageAsset, ImageReportConfig, ImageReportData, PostBlock
-from export.report_helpers import clean_image_report_text, format_posts_date_range, iter_report_comments, split_multi_values
+from export.report_helpers import (
+    clean_image_report_text,
+    format_posts_date_range,
+    iter_report_comments,
+    split_multi_values,
+)
 from modules.text_cleaning import normalize_weibo_text
 from modules.topic import build_report_title, normalize_report_title
 
