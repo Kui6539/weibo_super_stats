@@ -34,3 +34,19 @@ class TextCleaningTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WeiboEmoticonReplacementTests(unittest.TestCase):
+    """Unknown [xxx] tokens are ordinary text, not emoticons."""
+
+    def test_known_emoticons_are_replaced(self) -> None:
+        from export.report_helpers import replace_weibo_emoticons
+
+        self.assertNotIn("[doge]", replace_weibo_emoticons("看看这个[doge]"))
+
+    def test_unknown_bracket_text_survives_verbatim(self) -> None:
+        from export.report_helpers import replace_weibo_emoticons
+
+        for text in ("请看[公告]内容", "[抽奖规则]如下", "第[3]期"):
+            with self.subTest(text=text):
+                self.assertEqual(replace_weibo_emoticons(text), text)

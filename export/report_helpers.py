@@ -169,7 +169,11 @@ def replace_weibo_emoticons(text: str) -> str:
 
     def repl(match: re.Match[str]) -> str:
         key = normalize_weibo_text(match.group(1))
-        return mapping.get(key, "(｡･ω･｡)")
+        # Anything not in the table is ordinary bracketed text -- [公告],
+        # [抽奖规则], [视频] -- and must survive verbatim. Substituting a
+        # default kaomoji corrupted post content. The long-image renderer has
+        # always kept unknown tokens; this brings the other exporters in line.
+        return mapping.get(key, match.group(0))
 
     return re.sub(r"\[([^\[\]]{1,24})\]", repl, text)
 

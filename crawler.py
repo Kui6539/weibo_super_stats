@@ -11,6 +11,7 @@ import heapq
 import json
 import math
 import re
+import threading
 import time
 from collections import Counter
 from collections.abc import Callable, Iterable
@@ -23,6 +24,8 @@ from typing import Any
 import requests
 from bs4 import BeautifulSoup, Tag
 from core.crawl_types import CrawlConfig, CrawlError
+from core.errors import CookieInvalidError, RateLimitedError, VisitorSystemError
+from modules.crawler_client import looks_like_weibo_visitor
 from export.csv_exporter import DEFAULT_EXPORT_COLUMN_MAP
 from export.csv_exporter import build_export_row as _export_build_row
 from export.csv_exporter import export_posts_csv as _export_posts_csv
@@ -109,6 +112,16 @@ class WeiboSuperTopicCrawler:
         self.comment_cache_writer = comment_cache_writer
         self.topic_name = ""
         self.report_title = "微博超话周报"
+        self._thread_local = threading.local()
+        self._thread_sessions: list[requests.Session] = []
+        self._session_lock = threading.Lock()
+        self._throttle_lock = threading.Lock()
+        self._next_request_at = 0.0
+        self._min_request_interval = 0.0
+        self._comment_stats_lock = threading.Lock()
+        self._comment_attempts = 0
+        self._comment_failures = 0
+        self._comment_failure_reported = False
         self.session = requests.Session()
         self.session.headers.update(
             {
@@ -124,6 +137,89 @@ class WeiboSuperTopicCrawler:
         session.headers.update(self.session.headers)
         return session
 
+    def _thread_session(self) -> requests.Session:
+        """One Session per worker thread instead of one per post.
+
+        Sessions were created and closed around each post, so a 45-post run
+        paid 45 TCP+TLS handshakes and never reused a connection. The pools
+        top out at the worker count, which is at most a dozen.
+        """
+        local = self._thread_local
+        session = getattr(local, "session", None)
+        if session is None:
+            session = self._new_session()
+            local.session = session
+            with self._session_lock:
+                self._thread_sessions.append(session)
+        return session
+
+    def _close_thread_sessions(self) -> None:
+        with self._session_lock:
+            sessions, self._thread_sessions = self._thread_sessions, []
+        for session in sessions:
+            with suppress(Exception):
+                session.close()
+        self._thread_local = threading.local()
+
+    def _throttle(self) -> None:
+        """Keep at least pause_seconds between requests across all threads.
+
+        pause_seconds only ever gated the page loop, while the heaviest phases
+        -- comment fetching and full-text hydration, six threads each with no
+        sleep between pages -- ran unthrottled. That is the part most likely to
+        trip weibo's rate limiting.
+        """
+        interval = self._min_request_interval
+        if interval <= 0:
+            return
+        with self._throttle_lock:
+            now = time.monotonic()
+            wait = self._next_request_at - now
+            if wait > 0:
+                time.sleep(wait)
+                now = time.monotonic()
+            self._next_request_at = now + interval
+
+    def _request(
+        self,
+        method: str,
+        url: str,
+        *,
+        session: requests.Session | None = None,
+        retries: int = 2,
+        **kwargs: Any,
+    ) -> requests.Response:
+        """Perform a weibo request with throttling, retries and typed errors.
+
+        Every fetch used to be a bare single-shot session.get: one transient
+        ConnectionError on page 40 aborted the whole job.
+        """
+        target = session or self.session
+        kwargs.setdefault("timeout", (5, 20))
+        last_error: Exception | None = None
+        for attempt in range(retries + 1):
+            self._throttle()
+            try:
+                response = target.request(method, url, **kwargs)
+            except requests.RequestException as err:
+                last_error = err
+                if attempt < retries:
+                    time.sleep(min(1.5 * (attempt + 1), 5))
+                continue
+            if looks_like_weibo_visitor(response.text[:200000], response.url):
+                raise VisitorSystemError()
+            if response.status_code in {401, 403}:
+                raise CookieInvalidError()
+            if response.status_code == 429:
+                raise RateLimitedError()
+            if response.status_code >= 500:
+                last_error = CrawlError(f"微博服务端返回 HTTP {response.status_code}")
+                if attempt < retries:
+                    time.sleep(min(1.5 * (attempt + 1), 5))
+                continue
+            return response
+        raise CrawlError(f"网络请求失败：{type(last_error).__name__ if last_error else '未知错误'}。请确认网络可访问微博后重试。")
+
     def _log(self, message: str) -> None:
         if self.progress_callback:
             self.progress_callback(message)
@@ -138,6 +234,11 @@ class WeiboSuperTopicCrawler:
             raise CrawlError("无法从输入中解析超话ID，请确认链接格式。")
         if not self.cookie:
             raise CrawlError("Cookie 为空。请先从已登录的微博页面复制 Cookie。")
+
+        # Apply the user's pacing to every request, not just the page loop.
+        # Threads share the limiter, so the configured interval is the interval
+        # weibo actually sees regardless of how many workers are running.
+        self._min_request_interval = max(0.0, float(config.pause_seconds or 0.0))
 
         referer = f"https://weibo.com/p/{topic_id}/super_index"
         use_fixed_window = bool(config.window_start and config.window_end)
@@ -265,8 +366,7 @@ class WeiboSuperTopicCrawler:
             if page >= page_limit:
                 self._log(f"已翻到最大页数 {page_limit}，停止抓取。")
                 break
-
-            time.sleep(max(config.pause_seconds, 0))
+            # Pacing between pages is handled by the shared limiter in _request.
 
         if not all_posts:
             if use_fixed_window:
@@ -294,6 +394,13 @@ class WeiboSuperTopicCrawler:
 
         all_posts.sort(key=lambda x: float(x.get("score", 0.0)), reverse=True)
         self._emit_stage_cache("posts_scored", all_posts)
+        stats = self.comment_failure_summary()
+        if stats["failures"]:
+            self._log(
+                f"评论分析共失败 {stats['failures']}/{stats['attempts']} 条，"
+                "对应帖子的作者回复数与热评可能缺失。"
+            )
+        self._close_thread_sessions()
         return all_posts
 
     def _apply_chaohua_topic_name(self, page_data: dict[str, Any], super_topic: str) -> None:
@@ -305,21 +412,19 @@ class WeiboSuperTopicCrawler:
             self._log(f"已识别超话名称：{self.topic_name}")
 
     def _fetch_super_index_page(self, super_index_url: str, page: int) -> str:
-        resp = self.session.get(
+        resp = self._request(
+            "GET",
             super_index_url,
             params={"page": str(page)},
             headers={"Referer": "https://weibo.com/"},
-            timeout=20,
         )
-        text = resp.text.strip()
-        if "<title>Sina Visitor System</title>" in text:
-            raise CrawlError("微博返回访客验证页面。请使用已登录账号 Cookie 重试。")
         if resp.status_code >= 400:
             raise CrawlError(f"加载超话页面失败，HTTP {resp.status_code}")
-        return text
+        return resp.text.strip()
 
     def _fetch_chaohua_page(self, topic_id: str, params: dict[str, Any]) -> dict[str, Any]:
-        resp = self.session.get(
+        resp = self._request(
+            "GET",
             CHAOHUA_API_URL,
             params=params,
             headers={
@@ -327,11 +432,7 @@ class WeiboSuperTopicCrawler:
                 "X-Requested-With": "XMLHttpRequest",
                 "Accept": "application/json, text/plain, */*",
             },
-            timeout=20,
         )
-        text = resp.text.strip()
-        if "<title>Sina Visitor System</title>" in text or "passport.weibo.com/visitor" in resp.url:
-            raise CrawlError("微博返回访客验证页面。请使用已登录账号 Cookie 重试。")
         if resp.status_code >= 400:
             raise CrawlError(f"加载新版超话接口失败，HTTP {resp.status_code}")
         try:
@@ -526,11 +627,38 @@ class WeiboSuperTopicCrawler:
         config: CrawlConfig,
         score_config: PreparedScoreConfig | None = None,
     ) -> None:
-        session = self._new_session()
-        try:
-            self._enrich_score_fields(post, config, session=session, score_config=score_config)
-        finally:
-            session.close()
+        self._enrich_score_fields(post, config, session=self._thread_session(), score_config=score_config)
+
+    COMMENT_FAILURE_THRESHOLD = 0.3
+    COMMENT_FAILURE_MIN_SAMPLE = 8
+
+    def _record_comment_failure(self, post_id: str, error: Exception | None = None, fatal: bool = False) -> None:
+        with self._comment_stats_lock:
+            self._comment_failures += 1
+            failures, attempts = self._comment_failures, self._comment_attempts
+            already_reported = self._comment_failure_reported
+            crossed = (
+                attempts >= self.COMMENT_FAILURE_MIN_SAMPLE
+                and failures / max(1, attempts) >= self.COMMENT_FAILURE_THRESHOLD
+            )
+            if crossed and not already_reported:
+                self._comment_failure_reported = True
+        if error is not None:
+            self._log(f"评论分析失败（{post_id}）：{type(error).__name__}: {error}")
+        if fatal or already_reported or not crossed:
+            return
+        self._log(
+            f"警告：已有 {failures}/{attempts} 条帖子的评论分析失败，"
+            "报告中的作者回复数与热评可能不完整。请检查 Cookie 是否仍然有效，或调大请求间隔。"
+        )
+
+    def _note_comment_attempt(self) -> None:
+        with self._comment_stats_lock:
+            self._comment_attempts += 1
+
+    def comment_failure_summary(self) -> dict[str, int]:
+        with self._comment_stats_lock:
+            return {"attempts": self._comment_attempts, "failures": self._comment_failures}
 
     def _enrich_score_fields(
         self,
@@ -549,6 +677,7 @@ class WeiboSuperTopicCrawler:
         all_comments: list[dict] = []
         analysis_ok = total_comments <= 0
         if total_comments > 0 and post_id and author_id:
+            self._note_comment_attempt()
             try:
                 comment_analysis = self._read_comment_cache(post_id)
                 if comment_analysis is None:
@@ -565,8 +694,18 @@ class WeiboSuperTopicCrawler:
                 top_comments = list(comment_analysis.get("top_comments", []) or [])
                 all_comments = list(comment_analysis.get("all_comments", []) or [])
                 analysis_ok = True
-            except Exception:
-                # 评论结构接口不稳定时，不让整批任务失败
+            except (CookieInvalidError, VisitorSystemError, RateLimitedError):
+                # Losing the login mid-run is not a per-post hiccup; without
+                # this the run "succeeds" with author_replies=0 everywhere and
+                # no hot comments, and the user is never told the report is
+                # degraded.
+                self._record_comment_failure(post_id, fatal=True)
+                raise
+            except Exception as err:
+                # Individual posts do fail (deleted, comments closed, flaky
+                # endpoint); tolerate them but count them, and surface the
+                # problem once the failure rate says it is systemic.
+                self._record_comment_failure(post_id, error=err)
                 author_replies = 0
                 top_comments = []
                 all_comments = []
@@ -859,11 +998,7 @@ class WeiboSuperTopicCrawler:
                     self._log(f"正文校正进度 {completed}/{total}")
 
     def _hydrate_one_post_with_private_session(self, post: dict) -> None:
-        session = self._new_session()
-        try:
-            self._hydrate_one_post(post, session=session)
-        finally:
-            session.close()
+        self._hydrate_one_post(post, session=self._thread_session())
 
     def _hydrate_one_post(self, post: dict, session: requests.Session | None = None) -> None:
         content = str(post.get("content") or "")

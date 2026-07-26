@@ -28,13 +28,16 @@ class FakeSession:
         self.api_index = 0
         self.calls: list[tuple[str, dict | None]] = []
 
-    def get(self, url: str, params=None, headers=None, timeout=None):
+    def request(self, method: str, url: str, params=None, headers=None, timeout=None):
         self.calls.append((url, params))
         if "ajax_proxy/chaohua/page" in url:
             payload = self.api_payloads[min(self.api_index, len(self.api_payloads) - 1)]
             self.api_index += 1
             return FakeResponse(json_data=payload)
         return FakeResponse("<!doctype html><html><title>Weibo</title><div id='app'></div></html>")
+
+    def get(self, url: str, params=None, headers=None, timeout=None):
+        return self.request("GET", url, params=params, headers=headers, timeout=timeout)
 
 
 class NoopCrawler(WeiboSuperTopicCrawler):
